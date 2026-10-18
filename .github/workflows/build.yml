@@ -1,0 +1,195 @@
+name: Build Release
+
+# 推送到 main 自动构建 + 发版；也可以在 Actions 页面手动触发
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+# 同一分支的多次推送排队执行，不互相取消（避免发版中断）
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# 创建 Release 需要写权限
+permissions:
+  contents: write
+
+jobs:
+  # ---------------------------------------------------------------
+  # 先跑一遍静态检查与测试，失败就不浪费 6 个平台的构建时间
+  # ---------------------------------------------------------------
+  test:
+    name: Vet & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+  # ---------------------------------------------------------------
+  # 6 平台矩阵并行编译
+  # ---------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.target }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 单个平台失败不影响其他平台继续构建
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-amd64
+            goos: windows
+            goarch: amd64
+            ext: ".exe"
+          - os: windows-latest
+            target: windows-arm64
+            goos: windows
+            goarch: arm64
+            ext: ".exe"
+          - os: ubuntu-latest
+            target: linux-amd64
+            goos: linux
+            goarch: amd64
+            ext: ""
+          - os: ubuntu-latest
+            target: linux-arm64
+            goos: linux
+            goarch: arm64
+            ext: ""
+          - os: macos-latest
+            target: macos-amd64
+            goos: darwin
+            goarch: amd64
+            ext: ""
+          - os: macos-latest
+            target: macos-arm64
+            goos: darwin
+            goarch: arm64
+            ext: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          # 交叉编译必须关闭 cgo，否则会去链接目标平台的 libc
+          CGO_ENABLED: "0"
+        run: >
+          go build -trimpath -ldflags="-s -w"
+          -o FreeModelRelay-${{ matrix.target }}${{ matrix.ext }} .
+
+      - name: Verify binary
+        shell: bash
+        run: |
+          f="FreeModelRelay-${{ matrix.target }}${{ matrix.ext }}"
+          ls -l "$f"
+          # 非本机架构无法直接执行，这里只确认产物非空
+          test -s "$f" || { echo "::error::构建产物为空"; exit 1; }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeModelRelay-${{ matrix.target }}
+          path: FreeModelRelay-${{ matrix.target }}${{ matrix.ext }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------
+  # 汇总产物、生成 tag、创建 Release
+  # ---------------------------------------------------------------
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: FreeModelRelay-*
+          # 把所有 artifact 摊平到一个目录，省掉一层 <artifact-name>/
+          merge-multiple: true
+
+      - name: Generate release tag
+        id: tag
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+
+          # 同一个 commit 重跑时复用已有 tag，避免版本号被重复递增
+          EXISTING=$(git tag --points-at HEAD --list 'v*' --sort=-version:refname | head -n 1 || true)
+          if [ -n "$EXISTING" ]; then
+            echo "复用已存在的 tag: $EXISTING"
+            echo "tag=$EXISTING" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          LATEST=$(git tag --list 'v*' --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
+          if [ -z "$LATEST" ]; then
+            TAG="v0.0.1"
+          else
+            VERSION="${LATEST#v}"
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+            TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+          fi
+          echo "生成新 tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          files: artifacts/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      - name: Job summary
+        run: |
+          {
+            echo "## 构建产物"
+            echo ""
+            echo "| 文件 | 大小 |"
+            echo "|---|---|"
+            for f in artifacts/*; do
+              echo "| \`$(basename "$f")\` | $(du -h "$f" | cut -f1) |"
+            done
+            echo ""
+            echo "Release: \`${{ steps.tag.outputs.tag }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
