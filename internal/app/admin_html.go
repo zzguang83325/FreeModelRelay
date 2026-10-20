@@ -577,36 +577,6 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
     <div class="form-actions"><button class="btn btn-primary" onclick="saveEgressProxyConfig()">💾 保存代理设置</button></div>
   </div>
 </div>
-
-<div class="section">
-  <div class="section-title">🛫 机场订阅（自动注入 zen 代理池）</div>
-  <div class="section-body">
-    <div class="form-row">
-      <div class="field"><label>启用订阅</label>
-        <select id="subEnabled"><option value="true">开启</option><option value="false">关闭</option></select>
-      </div>
-      <div class="field"><label>自动刷新间隔（分钟）</label><input type="text" id="subInterval" placeholder="360"></div>
-    </div>
-    <div class="form-row">
-      <div class="field"><label>订阅地址（每行一个，自动解析 trojan / vless / hysteria2 节点）</label>
-        <textarea id="subUrls" rows="4" placeholder="https://example.com/sub?token=xxx"></textarea>
-      </div>
-    </div>
-    <div class="form-actions">
-      <button class="btn btn-primary" onclick="saveSubscriptions()">💾 保存并刷新</button>
-      <button class="btn" onclick="refreshSubscriptionsNow()">🔄 仅更新订阅</button>
-      <span id="subStatus" class="hint" style="align-self:center;margin-left:8px">-</span>
-    </div>
-    <div class="hint" style="margin-top:4px">节点解析后自动在本机 11200 起的空闲端口开启本地 socks 出口，并入 zen 通道轮询池（对抗 IP 限流），坏节点自动冷却跳过；不影响统一出口代理与其他通道。</div>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">📡 订阅节点</div>
-  <div class="section-body">
-    <div id="subNodesBox" class="hint">加载中…</div>
-  </div>
-</div>
 </div>
 
 <div id="tab-opencode" class="tab-panel" style="display:none">
@@ -724,6 +694,36 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
   <div class="section-body">
     <div class="table-wrap"><div id="ocStatsBox"></div></div>
     <div id="ocModelStatsBox" style="margin-top:14px"></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">🛫 机场订阅（自动注入 zen 代理池）</div>
+  <div class="section-body">
+    <div class="form-row">
+      <div class="field"><label>启用订阅</label>
+        <select id="subEnabled"><option value="true">开启</option><option value="false">关闭</option></select>
+      </div>
+      <div class="field"><label>自动刷新间隔（分钟）</label><input type="text" id="subInterval" placeholder="360"></div>
+    </div>
+    <div class="form-row">
+      <div class="field"><label>订阅地址（每行一个，自动解析 trojan / vless / hysteria2 节点）</label>
+        <textarea id="subUrls" rows="4" placeholder="https://example.com/sub?token=xxx"></textarea>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="saveSubscriptions()">💾 保存并刷新</button>
+      <button class="btn" onclick="refreshSubscriptionsNow()">🔄 仅更新订阅</button>
+      <span id="subStatus" class="hint" style="align-self:center;margin-left:8px">-</span>
+    </div>
+    <div class="hint" style="margin-top:4px">节点解析后自动在本机 11200 起的空闲端口开启本地 socks 出口，并入 zen 通道轮询池（对抗 IP 限流），坏节点自动冷却跳过；不影响统一出口代理与其他通道。</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">📡 订阅节点</div>
+  <div class="section-body">
+    <div id="subNodesBox" class="hint">加载中…</div>
   </div>
 </div>
 </div>
@@ -1116,7 +1116,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
     if (el.dataset.tab === 'dashboard') { loadStats(); loadModelStats(); loadAccounts(); loadKeys(); loadCredits(); }
     if (el.dataset.tab === 'cline') { loadAccounts(); loadModels(); loadConfig(); }
     if (el.dataset.tab === 'logs') loadLogs();
-    if (el.dataset.tab === 'opencode') { loadOcConfig(); loadOcModels(); loadOcStats(); }
+    if (el.dataset.tab === 'opencode') { loadOcConfig(); loadOcModels(); loadOcStats(); loadSubscriptions(); }
     if (el.dataset.tab === 'workbuddy') { loadProviders(); loadWBConfig('workbuddy'); loadCredits(); }
     if (el.dataset.tab === 'workbuddy-ai') { loadProviders(); loadWBConfig('workbuddy-ai'); loadCredits(); }
     if (el.dataset.tab === 'qoder') { loadProviders(); loadQoderConfig(); loadCredits(); }
@@ -1137,7 +1137,7 @@ function switchTab(name) {
   if (name === 'dashboard') { loadStats(); loadModelStats(); loadAccounts(); loadKeys(); loadCredits(); }
   if (name === 'cline') { loadAccounts(); loadModels(); loadConfig(); }
   if (name === 'logs') loadLogs();
-  if (name === 'opencode') { loadOcConfig(); loadOcModels(); loadOcStats(); }
+  if (name === 'opencode') { loadOcConfig(); loadOcModels(); loadOcStats(); loadSubscriptions(); }
   if (name === 'workbuddy') { loadProviders(); loadWBConfig('workbuddy'); loadCredits(); }
   if (name === 'workbuddy-ai') { loadProviders(); loadWBConfig('workbuddy-ai'); loadCredits(); }
   if (name === 'qoder') { loadProviders(); loadQoderConfig(); loadCredits(); }
