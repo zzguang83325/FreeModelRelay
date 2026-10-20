@@ -31,6 +31,7 @@ func handleProvidersStatus(w http.ResponseWriter, r *http.Request) {
 		"workbuddy-ai": wbStatusPayload(wbVariantINTL),
 		"qoder":        qoderStatusPayload(),
 		"trae":         traeStatusPayload(),
+		"loomy":        loomyStatusPayload(),
 	}})
 }
 
@@ -236,6 +237,24 @@ func handleProviderConfigUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		setTraeConfig(cur)
 		writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: "配置已保存", Data: getTraeConfig()})
+	case "loomy":
+		cur := getLoomyConfig()
+		var patch struct {
+			Enabled    *bool `json:"enabled"`
+			MaxRetries *int  `json:"maxRetries"`
+		}
+		if err := readJSONBody(r, &patch); err != nil {
+			writeAPI(w, http.StatusBadRequest, apiResponse{Error: "invalid JSON: " + err.Error()})
+			return
+		}
+		if patch.Enabled != nil {
+			cur.Enabled = *patch.Enabled
+		}
+		if patch.MaxRetries != nil && *patch.MaxRetries >= 0 {
+			cur.MaxRetries = *patch.MaxRetries
+		}
+		setLoomyConfig(cur)
+		writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: "配置已保存", Data: getLoomyConfig()})
 	default:
 		writeAPI(w, http.StatusNotFound, apiResponse{Error: "unknown provider"})
 	}
@@ -493,6 +512,13 @@ func handleProviderModelsRefresh(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: fmt.Sprintf("已同步 %d 个模型", n)})
+	case "loomy":
+		n, err := loomySyncModels()
+		if err != nil {
+			writeAPI(w, http.StatusBadGateway, apiResponse{Error: err.Error()})
+			return
+		}
+		writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: fmt.Sprintf("已同步 %d 个模型", n)})
 	default:
 		writeAPI(w, http.StatusNotFound, apiResponse{Error: "unknown provider"})
 	}
@@ -525,6 +551,7 @@ func handleProviderModels(w http.ResponseWriter, r *http.Request) {
 		}(),
 		"qoder": qoderModelList(),
 		"trae":  traeModelList(),
+		"loomy": loomyModelList(),
 	}})
 }
 
@@ -539,6 +566,7 @@ func handleProviderCredits(w http.ResponseWriter, r *http.Request) {
 		"workbuddy-ai": wbCreditsPayload(wbVariantINTL),
 		"qoder":        qoderCreditsPayload(),
 		"trae":         traeCreditsPayload(),
+		"loomy":        loomyCreditsPayload(),
 		"autoCheckin":  autoCheckinResultsSnapshot(),
 	}})
 }
@@ -629,6 +657,15 @@ func registerProviderRoutes(adminMux *http.ServeMux) {
 	adminMux.HandleFunc("/admin/api/providers/qoder/checkin", corsHandler(handleProviderCheckin))
 	adminMux.HandleFunc("/admin/api/providers/workbuddy/probe", corsHandler(handleProviderProbe))
 	adminMux.HandleFunc("/admin/api/providers/workbuddy-ai/probe", corsHandler(handleProviderProbe))
+	// loomy(科大讯飞)
+	adminMux.HandleFunc("/admin/api/providers/loomy/config", corsHandler(handleProviderConfigUpdate))
+	adminMux.HandleFunc("/admin/api/providers/loomy/models/refresh", corsHandler(handleProviderModelsRefresh))
+	adminMux.HandleFunc("/admin/api/providers/loomy/accounts/add", corsHandler(handleLoomyAccountAdd))
+	adminMux.HandleFunc("/admin/api/providers/loomy/accounts/delete", corsHandler(handleLoomyAccountDelete))
+	adminMux.HandleFunc("/admin/api/providers/loomy/sms/send", corsHandler(handleLoomySMSSend))
+	adminMux.HandleFunc("/admin/api/providers/loomy/sms/verify", corsHandler(handleLoomySMSVerify))
+	adminMux.HandleFunc("/admin/api/providers/loomy/refresh", corsHandler(handleLoomyRefresh))
+	adminMux.HandleFunc("/admin/api/providers/loomy/enable", corsHandler(handleLoomyAccountToggle))
 }
 
 // startProviderBoot 启动时的第三方 provider 初始化: 导入本机 WorkBuddy 凭据并同步免费模型目录。
@@ -659,10 +696,18 @@ func startProviderBoot() {
 				log.Printf("  provider: qoder %d models ready", n)
 			}
 		}
+		if len(loomyLoadAccounts()) > 0 {
+			if n, err := loomySyncModels(); err != nil {
+				log.Printf("  provider: loomy models sync failed: %v", err)
+			} else {
+				log.Printf("  provider: loomy %d models ready", n)
+			}
+		}
 		// 各来源目录同步基本就绪, 输出一次多来源模型概览
 		time.Sleep(2 * time.Second)
 		logModelSourceSummary()
 	}()
 	traeBoot()
 	startAutoCheckin()
+	go loomySessionKeeper()
 }

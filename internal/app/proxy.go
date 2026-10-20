@@ -56,6 +56,9 @@ func StartProxy(host string, port int) error {
 
 	// 出口代理配置要在任何网络请求之前加载, 保证账号预热、模型同步都走正确出口
 	loadEgressProxyConfig()
+	// 机场订阅配置加载(节点实例在后台异步刷新启动)
+	loadSubscriptionConfig()
+	go startSubscriptionManager()
 
 	p := loadPool()
 	activeCount := 0
@@ -243,6 +246,10 @@ func StartProxy(host string, port int) error {
 			params["model"] = model
 			handleTraeChat(w, r, params)
 			return
+		case "loomy":
+			params["model"] = model
+			handleLoomyChat(w, r, params)
+			return
 		case "reject":
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error": map[string]string{"message": fmt.Sprintf("model %q is a paid zen model; only free zen models are proxied", model), "type": "invalid_request_error"},
@@ -293,6 +300,11 @@ func StartProxy(host string, port int) error {
 	})
 	mux.HandleFunc("/v1/chat/completions", chatHandler)
 	mux.HandleFunc("/chat/completions", chatHandler)
+
+	// OpenAI Images API: 目前只有 loomy 上游提供图片生成模型。
+	imagesHandler := apiKeyHandler(handleImagesGenerations)
+	mux.HandleFunc("/v1/images/generations", imagesHandler)
+	mux.HandleFunc("/images/generations", imagesHandler)
 
 	// Anthropic Messages API support
 	anthropicHandler := apiKeyHandler(func(w http.ResponseWriter, r *http.Request) {

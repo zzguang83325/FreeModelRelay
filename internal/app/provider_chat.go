@@ -171,6 +171,16 @@ func prepareProviderChat(route string, params map[string]any) (*http.Response, s
 			return nil, nil, "", err
 		}
 		return resp, traeSSEExtract, m.Key, nil
+	case "loomy":
+		if !getLoomyConfig().Enabled {
+			return nil, nil, "", providerErr(http.StatusServiceUnavailable, "api_error",
+				"loomy upstream disabled in /admin/ settings")
+		}
+		resp, m, acc, err := loomyPrepareChat(params)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		return resp, loomySSEExtractFor(acc), m.Key, nil
 	}
 	return nil, nil, "", providerErr(http.StatusBadRequest, "invalid_request_error",
 		"model %q is not a third-party provider model", route)
@@ -532,6 +542,29 @@ func providerModelList() []map[string]any {
 			})
 		}
 	}
+	if getLoomyConfig().Enabled {
+		for _, m := range loomyModelList() {
+			// loomy 的图片模型上游没标倍率(按点数实扣), 与 trae 同理不能标 free;
+			// 标价模型从显示名解析倍率。imageGen 标志透传给客户端与后台。
+			cost := "paid"
+			mult, _ := m["priceFactor"].(float64)
+			name, _ := m["name"].(string)
+			baseID, _ := m["baseId"].(string)
+			item := map[string]any{
+				"id":       providerDecorateID("loomy", baseID, name, mult, cost == "free"),
+				"object":   "model",
+				"created":  time.Now().UnixMilli(),
+				"owned_by": "loomy",
+				"source":   "loomy",
+				"status":   "active",
+				"cost":     cost,
+				"context":  m["context"],
+				"output":   m["output"],
+				"imageGen": m["imageGen"],
+			}
+			out = append(out, item)
+		}
+	}
 	return out
 }
 
@@ -554,6 +587,8 @@ func providerRoute(id string) string {
 				return "qoder"
 			case "trae", "tr":
 				return "trae"
+			case "loomy", "xf", "xunfei":
+				return "loomy"
 			}
 		}
 	}
@@ -569,6 +604,9 @@ func providerRoute(id string) string {
 	if _, ok := traeResolveDecorated(id); ok {
 		return "trae"
 	}
+	if _, ok := loomyResolveDecorated(id); ok {
+		return "loomy"
+	}
 	// 裸名兜底: 内部路由 id / 显示名
 	stripped := providerStripDecorate(id)
 	if m, ok := wbResolveModel(stripped); ok {
@@ -580,6 +618,9 @@ func providerRoute(id string) string {
 	if _, ok := traeResolveModel(stripped); ok {
 		return "trae"
 	}
+	if _, ok := loomyResolveModel(stripped); ok {
+		return "loomy"
+	}
 	return ""
 }
 
@@ -588,7 +629,7 @@ func providerStripPrefix(id string) string {
 	id = providerStripDecorate(id)
 	if i := strings.Index(id, "/"); i > 0 {
 		switch id[:i] {
-		case "workbuddy", "wb", "workbuddy-ai", "wb-ai", "workbuddyai", "qoder", "qd", "trae", "tr":
+		case "workbuddy", "wb", "workbuddy-ai", "wb-ai", "workbuddyai", "qoder", "qd", "trae", "tr", "loomy", "xf", "xunfei":
 			return strings.TrimSpace(id[i+1:])
 		}
 	}
@@ -600,7 +641,7 @@ func providerStripPrefix(id string) string {
 // 静默交给 cline 账号池(用 cline 的额度跑另一个上游, 且不报错)。
 func isProviderRoute(route string) bool {
 	switch route {
-	case wbVariantCN.ID, wbVariantINTL.ID, "qoder", "trae":
+	case wbVariantCN.ID, wbVariantINTL.ID, "qoder", "trae", "loomy":
 		return true
 	}
 	return false
@@ -618,6 +659,8 @@ func providerNameOf(variant string) string {
 		return "qoder"
 	case "trae":
 		return "trae"
+	case "loomy":
+		return "loomy"
 	}
 	return variant
 }
@@ -646,6 +689,12 @@ func providerPublicIDs() map[string]bool {
 		seen[m.Key] = struct{}{}
 	}
 	for _, m := range traeModelSnapshot() {
+		if _, ok := seen[m.Key]; ok {
+			dup[m.Key] = true
+		}
+		seen[m.Key] = struct{}{}
+	}
+	for _, m := range loomyModelSnapshot() {
 		if _, ok := seen[m.Key]; ok {
 			dup[m.Key] = true
 		}

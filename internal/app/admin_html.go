@@ -234,6 +234,7 @@ body:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
 <div class="nav-item" data-tab="workbuddy-ai"><span class="nav-ico">🐧</span> WorkBuddy国际版</div>
 <div class="nav-item" data-tab="qoder"><span class="nav-ico">🔷</span> Qoder账号管理</div>
 <div class="nav-item" data-tab="trae"><span class="nav-ico">🟣</span> Trae账号管理</div>
+<div class="nav-item" data-tab="loomy"><span class="nav-ico">🅾️</span> 科大讯飞</div>
 <div class="nav-item" data-tab="chat"><span class="nav-ico">💬</span> 模型聊天</div>
 <div class="nav-item" data-tab="egress-proxy"><span class="nav-ico">🧭</span> 网络设置</div>
 <div class="nav-item" data-tab="logs"><span class="nav-ico">📜</span> 请求日志</div>
@@ -574,6 +575,36 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
     </div>
     <div class="hint" style="margin-bottom:8px">v2rayN 等软件「自动配置系统代理」写入的就是系统代理，开启上面的开关即可自动跟随；开启 TUN 模式时本程序无须任何配置也会走 TUN 出口。</div>
     <div class="form-actions"><button class="btn btn-primary" onclick="saveEgressProxyConfig()">💾 保存代理设置</button></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">🛫 机场订阅（自动注入 zen 代理池）</div>
+  <div class="section-body">
+    <div class="form-row">
+      <div class="field"><label>启用订阅</label>
+        <select id="subEnabled"><option value="true">开启</option><option value="false">关闭</option></select>
+      </div>
+      <div class="field"><label>自动刷新间隔（分钟）</label><input type="text" id="subInterval" placeholder="360"></div>
+    </div>
+    <div class="form-row">
+      <div class="field"><label>订阅地址（每行一个，自动解析 trojan / vless / hysteria2 节点）</label>
+        <textarea id="subUrls" rows="4" placeholder="https://example.com/sub?token=xxx"></textarea>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="saveSubscriptions()">💾 保存并刷新</button>
+      <button class="btn" onclick="refreshSubscriptionsNow()">🔄 仅更新订阅</button>
+      <span id="subStatus" class="hint" style="align-self:center;margin-left:8px">-</span>
+    </div>
+    <div class="hint" style="margin-top:4px">节点解析后自动在本机 11200 起的空闲端口开启本地 socks 出口，并入 zen 通道轮询池（对抗 IP 限流），坏节点自动冷却跳过；不影响统一出口代理与其他通道。</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">📡 订阅节点</div>
+  <div class="section-body">
+    <div id="subNodesBox" class="hint">加载中…</div>
   </div>
 </div>
 </div>
@@ -919,6 +950,97 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
 </div>
 </div>
 
+<!-- ============ Loomy (科大讯飞) ============ -->
+<div id="tab-loomy" class="tab-panel" style="display:none">
+<h2>🅾️ 科大讯飞 Loomy（模型网关 loomyad.xunfei.cn）</h2>
+
+<div class="section">
+  <div class="section-title">💎 点数余额
+    <button class="btn btn-sm" onclick="loadCredits()" style="margin-left:auto">🔄 刷新</button>
+  </div>
+  <div class="section-body" style="padding:6px"><div id="lmCreditsBox" style="padding:12px">加载中...</div></div>
+</div>
+
+<div class="section">
+  <div class="section-title">🔍 上游信息</div>
+  <div class="section-body"><div class="table-wrap"><div id="lmInfo"></div></div></div>
+</div>
+
+<div class="section">
+  <div class="section-title">🔑 添加账号</div>
+  <div class="section-body">
+    <div class="hint" style="margin:0 0 12px">Loomy 登录态是 14 天 session（无 refresh token），认证方式是 <code>useSessionAuth</code> ——
+      session 本身就是网关的 Bearer token。保存<strong>手机号+密码</strong>即可全自动续期（到期前 3 天自动重登）；
+      短信登录只需收一次验证码；也可以直接粘贴从其它部署导出的 session（无密码，过期后需手动换新）。<br>
+      凭据保存在本机 <code>data/.loomy-accounts.json</code>，每个账号绑定独立设备标识。</div>
+    <div class="tab-row" style="margin-bottom:10px">
+      <div class="tab active" data-tab="pass" id="lmTabPass" onclick="loomySwitchAddTab('pass')">🔑 密码登录</div>
+      <div class="tab" data-tab="sms" id="lmTabSms" onclick="loomySwitchAddTab('sms')">📱 短信验证码</div>
+      <div class="tab" data-tab="session" id="lmTabSession" onclick="loomySwitchAddTab('session')">✏️ 导入 Session</div>
+    </div>
+    <div id="lmAddPass">
+      <div class="form-row">
+        <div class="field"><label>手机号</label><input type="text" id="lmPhone" placeholder="13800000000"></div>
+        <div class="field"><label>密码</label><input type="password" id="lmPassword" placeholder="讯飞账号密码（在讯飞账号中心设置过）"></div>
+        <div class="field"><label>备注名（可选）</label><input type="text" id="lmName" placeholder="如：主号"></div>
+      </div>
+      <div class="form-actions"><button class="btn btn-primary" onclick="addLoomyPassword()">＋ 登录并添加</button></div>
+    </div>
+    <div id="lmAddSms" style="display:none">
+      <div class="form-row">
+        <div class="field"><label>手机号</label><input type="text" id="lmSmsPhone" placeholder="13800000000"></div>
+        <div class="field"><label>验证码</label><input type="text" id="lmSmsCode" placeholder="收到短信后填写"></div>
+        <div class="field"><label>备注名（可选）</label><input type="text" id="lmSmsName" placeholder="如：小号"></div>
+      </div>
+      <div class="form-actions">
+        <button class="btn" onclick="loomySmsSend()">📤 发送验证码</button>
+        <button class="btn btn-primary" onclick="loomySmsVerify()">＋ 验证并添加</button>
+      </div>
+    </div>
+    <div id="lmAddSession" style="display:none">
+      <div class="form-row">
+        <div class="field"><label>Session Token</label>
+          <textarea id="lmSession" rows="4" placeholder="粘贴 Loomy 登录 session（其它部署的 .loomy-accounts.json 里可导出）" style="font-family:monospace;font-size:12px"></textarea>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>备注名（可选）</label><input type="text" id="lmSessionName" placeholder="如：共享号"></div>
+      </div>
+      <div class="form-actions"><button class="btn btn-primary" onclick="addLoomySession()">＋ 校验并导入</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">🔄 上游配置</div>
+  <div class="section-body">
+    <div class="form-row">
+      <div class="field"><label>启用科大讯飞上游</label>
+        <select id="lmEnabled"><option value="true">开启</option><option value="false">关闭</option></select>
+      </div>
+      <div class="field"><label>失败重试次数</label><input type="text" id="lmMaxRetries" placeholder="1"></div>
+    </div>
+    <div class="hint" style="margin:0 0 10px">402（点数不足）自动冷却 10 分钟并换号重试；401（session 失效）有密码时自动重登。
+      出站走全局「网络设置」的统一代理规则。</div>
+    <div class="form-actions"><button class="btn btn-primary" onclick="saveLoomyConfig()">💾 保存配置</button></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">👤 账号列表
+    <button class="btn btn-sm" onclick="refreshLoomyAccounts()" style="margin-left:auto">🔄 全部刷新（重登+点数）</button>
+  </div>
+  <div class="section-body" style="padding:6px"><div id="lmAccountsList" style="padding:12px">加载中...</div></div>
+</div>
+
+<div class="section">
+  <div class="section-title">🧠 模型列表
+    <button class="btn btn-sm" onclick="refreshLoomyModels()" style="margin-left:auto">🔄 手动同步</button>
+  </div>
+  <div class="section-body" style="padding:6px"><div id="lmModelsList" style="padding:12px">加载中...</div></div>
+</div>
+</div>
+
 </div>
 </div>
 
@@ -999,9 +1121,10 @@ document.querySelectorAll('.nav-item').forEach(el => {
     if (el.dataset.tab === 'workbuddy-ai') { loadProviders(); loadWBConfig('workbuddy-ai'); loadCredits(); }
     if (el.dataset.tab === 'qoder') { loadProviders(); loadQoderConfig(); loadCredits(); }
     if (el.dataset.tab === 'trae') { loadProviders(); loadTraeConfig(); loadCredits(); }
+    if (el.dataset.tab === 'loomy') { loadProviders(); loadLoomyConfig(); loadCredits(); }
     if (el.dataset.tab === 'chat') loadChatModels();
     if (el.dataset.tab === 'models') loadAllModels();
-    if (el.dataset.tab === 'egress-proxy') loadEgressProxyConfig();
+    if (el.dataset.tab === 'egress-proxy') { loadEgressProxyConfig(); loadSubscriptions(); }
   });
 });
 
@@ -1021,7 +1144,7 @@ function switchTab(name) {
   if (name === 'trae') { loadProviders(); loadTraeConfig(); loadCredits(); }
   if (name === 'chat') loadChatModels();
   if (name === 'models') loadAllModels();
-  if (name === 'egress-proxy') loadEgressProxyConfig();
+  if (name === 'egress-proxy') { loadEgressProxyConfig(); loadSubscriptions(); }
 }
 
 // Cline 子标签
@@ -1731,6 +1854,55 @@ async function saveEgressProxyConfig() {
   } catch (e) { toast('保存失败: ' + e.message, 'error'); }
 }
 
+async function loadSubscriptions() {
+  try {
+    const d = await api('GET', '/subscriptions');
+    const c = d.data || {};
+    _('subEnabled').value = String(c.enabled === true);
+    _('subInterval').value = c.intervalMin || 360;
+    _('subUrls').value = (c.urls || []).join('\n');
+    const err = c.lastError ? ' · <span style="color:#d9534f">' + esc(c.lastError) + '</span>' : '';
+    _('subStatus').innerHTML = '生效 ' + (c.liveCount || 0) + ' 节点 · 上次刷新: ' + (c.lastRefresh || '-') + err;
+    const nodes = c.nodes || [];
+    if (!nodes.length) {
+      _('subNodesBox').textContent = '暂无生效节点（保存订阅地址后自动拉取解析）';
+    } else {
+      const rows = nodes.map(n => '<tr><td style="text-align:left">' + esc(n.name) + '</td><td>' + esc(n.protocol) + '</td><td style="text-align:left;font-family:monospace;font-size:12px">' + esc(n.server) + '</td><td>' + n.remotePort + '</td><td><b>' + n.localPort + '</b></td></tr>').join('');
+      _('subNodesBox').innerHTML = '<div class="table-wrap" style="max-height:300px;overflow-y:auto"><table><thead><tr><th style="text-align:left">节点</th><th>协议</th><th style="text-align:left">服务器</th><th>远程端口</th><th>本地端口</th></tr></thead><tbody>' + rows + '</tbody></table></div><div class="hint">共 ' + nodes.length + ' 个节点，本地端口自动分配（11200 起），已并入 zen 轮询池。</div>';
+    }
+  } catch (e) { _('subStatus').textContent = '加载失败'; }
+}
+
+async function saveSubscriptions() {
+  const urls = _('subUrls').value.split('\n').map(s => s.trim()).filter(Boolean);
+  for (const u of urls) {
+    if (!/^https?:\/\/.+/i.test(u)) { toast('订阅地址无效: ' + u, 'error'); return; }
+  }
+  const interval = parseInt(_('subInterval').value, 10) || 360;
+  try {
+    await api('POST', '/subscriptions/update', {
+      enabled: _('subEnabled').value === 'true',
+      urls: urls,
+      intervalMin: interval
+    });
+    toast('订阅配置已保存，正在后台刷新…', 'success');
+    setTimeout(loadSubscriptions, 3000);
+  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
+}
+
+async function refreshSubscriptionsNow() {
+  _('subStatus').textContent = '正在更新订阅…';
+  try {
+    const d = await api('POST', '/subscriptions/refresh');
+    const hasErr = d.data && d.data.lastError;
+    toast(hasErr ? '订阅已更新（部分失败，详见状态）' : '订阅已更新', hasErr ? 'error' : 'success');
+    loadSubscriptions();
+  } catch (e) {
+    toast('更新失败: ' + e.message, 'error');
+    loadSubscriptions();
+  }
+}
+
 async function loadOcModels() {
   try {
     const d = await api('GET', '/opencode/models');
@@ -1938,7 +2110,8 @@ const CREDIT_SOURCES = [
   { key: 'workbuddy', label: 'WorkBuddy（中国区）', prefix: 'wb' },
   { key: 'workbuddy-ai', label: 'WorkBuddy 国际版', prefix: 'wba' },
   { key: 'qoder', label: 'Qoder', prefix: 'qd' },
-  { key: 'trae', label: 'Trae', prefix: 'tr' }
+  { key: 'trae', label: 'Trae', prefix: 'tr' },
+  { key: 'loomy', label: '科大讯飞', prefix: 'lm' }
 ];
 
 // 仪表盘上的紧凑视图：一行一个来源，余额 + 签到状态 + 就地签到按钮。
@@ -2367,6 +2540,195 @@ async function refreshTraeModels() {
   } catch (e) { toast('同步失败: ' + e.message, 'error', 9000); }
 }
 
+// ========== 科大讯飞 Loomy ==========
+function loomySwitchAddTab(name) {
+  ['pass', 'sms', 'session'].forEach(t => {
+    const tab = _('lmTab' + t.charAt(0).toUpperCase() + t.slice(1));
+    const body = _('lmAdd' + t.charAt(0).toUpperCase() + t.slice(1));
+    if (tab) tab.classList.toggle('active', t === name);
+    if (body) body.style.display = t === name ? '' : 'none';
+  });
+}
+
+function renderLoomy() {
+  const p = providerStatus ? providerStatus.loomy : null;
+  if (!p) return;
+  const rows = [
+    ['模型网关', 'https://loomyad.xunfei.cn/api/v1（OpenAI 兼容）'],
+    ['账号服务', 'account.xfinfr.com（HMAC-SHA1 签名登录）'],
+    ['账号数', String((p.accounts || []).length) + ' · 模型数 ' + String(p.modelCount || 0)],
+    ['计费', '点数制：永久点数 + 每日赠送（优先消耗），倍率 x0.1 ~ x12'],
+    ['图片生成', '支持 /v1/images/generations（模型列表里带 🎨 生图 标志的模型）']
+  ];
+  const box = _('lmInfo');
+  if (box) box.innerHTML = '<table><tbody>' + rows.map(r => '<tr><td style="text-align:left;color:var(--text2);width:150px">' + r[0] + '</td><td style="text-align:left">' + r[1] + '</td></tr>').join('') + '</tbody></table>';
+
+  const accBox = _('lmAccountsList');
+  const accs = p.accounts || [];
+  if (accBox) {
+    if (!accs.length) {
+      accBox.innerHTML = '<div class="empty">暂无账号。用上方「密码登录 / 短信验证码 / 导入 Session」任一方式添加。</div>';
+    } else {
+      accBox.innerHTML = '<div class="table-wrap"><table><thead><tr>' +
+        '<th style="text-align:left">账号</th><th style="text-align:left">手机号</th>' +
+        '<th>点数(可用)</th><th>永久/每日</th><th>Session</th><th>有效期至</th>' +
+        '<th>调用</th><th>耗点</th><th style="text-align:left">备注</th><th></th>' +
+        '</tr></thead><tbody>' +
+        accs.map(a => {
+          const sess = a.sessionTail
+            ? (a.daysLeft >= 0 && a.daysLeft < 3
+              ? '<span class="status expired"><span class="status-dot expired"></span>将过期</span>'
+              : '<span class="status active"><span class="status-dot active"></span>有效</span>')
+            : '<span class="status cooldown"><span class="status-dot cooldown"></span>无</span>';
+          const renewal = a.hasPassword ? '可自动续期' : '<span style="color:var(--amber)">需手动换</span>';
+          return '<tr>' +
+          '<td style="text-align:left;font-size:12px">' + esc(a.name || '未命名') + '</td>' +
+          '<td style="text-align:left;font-family:monospace;font-size:11px">' + esc(a.loginId || '-') + '</td>' +
+          '<td style="font-weight:600">' + fmtNum(a.available) + '</td>' +
+          '<td class="mono" style="font-size:11px">' + fmtNum(a.balance) + ' / ' + fmtNum(a.dailyBalance) + '</td>' +
+          '<td>' + sess + (a.inCooldown ? ' <span class="status cooldown"><span class="status-dot cooldown"></span>冷却</span>' : '') + '</td>' +
+          '<td class="mono" style="font-size:11px">' + esc(a.expireAtText || '-') + '<div style="font-size:10px;color:var(--text3)">' + renewal + '</div></td>' +
+          '<td>' + fmtNum(a.requests) + '</td>' +
+          '<td>' + (a.pointsUsed ? Number(a.pointsUsed).toFixed(1) : '0') + '</td>' +
+          '<td style="text-align:left;font-size:11px;color:var(--text3)">' + esc(a.lastError || '') + '</td>' +
+          '<td><button class="btn btn-sm" onclick="refreshLoomyOne(\'' + a.id + '\')" title="重登并刷新点数">🔄</button> ' +
+          '<button class="btn btn-sm btn-danger" onclick="delLoomyAccount(\'' + a.id + '\')" title="删除">✕</button></td>' +
+          '</tr>';
+        }).join('') + '</tbody></table></div>' +
+        '<div class="hint">「有效」按 session 剩余天数判断（剩余 &lt;3 天显示「将过期」，有密码的账号会在后台自动重登）；' +
+        '「耗点」是本次运行累计消耗的点数（来自上游 usage.points_consumed）。</div>';
+    }
+  }
+
+  const mBox = _('lmModelsList');
+  const models = p.models || [];
+  if (mBox) {
+    if (!models.length) {
+      mBox.innerHTML = '<div class="empty">暂无模型，点右上角「🔄 手动同步」拉取（需先添加账号）。</div>';
+    } else {
+      mBox.innerHTML = '<div class="table-wrap"><table><thead><tr><th style="text-align:left">模型 ID</th><th style="text-align:left">显示名</th><th>倍率</th><th>上下文</th><th>能力</th></tr></thead><tbody>' +
+        models.map(m => {
+          const caps = [
+            m.reason ? '🧠' : '', m.image ? '👁' : '',
+            m.imageGen ? '<span title="走 /v1/images/generations 调用">🎨 生图</span>' : ''
+          ].filter(Boolean).join(' ');
+          return '<tr><td style="text-align:left;font-family:monospace">' + esc(m.id) + '</td>' +
+            '<td style="text-align:left">' + esc(m.name || '') + '</td>' +
+            '<td>' + (m.price ?? 0) + '</td><td>' + (m.context || 0) + '</td>' +
+            '<td style="white-space:nowrap">' + (caps || '-') + '</td></tr>';
+        }).join('') +
+        '</tbody></table></div><div class="hint">共 ' + models.length + ' 个模型 · 倍率 0 表示上游未标价（按点数实扣） · ' +
+        '调用时可用 <code>loomy/&lt;模型ID&gt;</code>、<code>xf/&lt;模型ID&gt;</code> 强制路由 · 🎨 模型走 <code>/v1/images/generations</code></div>';
+    }
+  }
+}
+
+async function loadLoomyConfig() {
+  try {
+    const p = providerStatus ? providerStatus.loomy : (await api('GET', '/providers/status')).data.loomy;
+    _('lmEnabled').value = String(!!p.enabled);
+    _('lmMaxRetries').value = p.maxRetries == null ? 1 : p.maxRetries;
+    renderLoomy();
+  } catch (e) { /* ignore */ }
+}
+
+async function saveLoomyConfig() {
+  try {
+    await api('POST', '/providers/loomy/config', {
+      enabled: _('lmEnabled').value === 'true',
+      maxRetries: parseInt(_('lmMaxRetries').value) || 0
+    });
+    toast('配置已保存', 'success');
+    loadProviders();
+  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
+}
+
+async function addLoomyPassword() {
+  const phone = _('lmPhone').value.trim();
+  const password = _('lmPassword').value;
+  if (!phone || !password) { toast('请填写手机号和密码', 'error'); return; }
+  try {
+    const d = await api('POST', '/providers/loomy/accounts/add', {
+      mode: 'password', phone: phone, password: password, name: _('lmName').value.trim()
+    });
+    _('lmPassword').value = '';
+    toast(d.message || '添加成功', 'success', 8000);
+    loadProviders();
+  } catch (e) { toast('添加失败: ' + e.message, 'error', 10000); }
+}
+
+async function loomySmsSend() {
+  const phone = _('lmSmsPhone').value.trim();
+  if (!phone) { toast('请填写手机号', 'error'); return; }
+  try {
+    const d = await api('POST', '/providers/loomy/sms/send', { phone: phone });
+    window._loomyMsgId = (d.data && d.data.msgid) || '';
+    toast(d.message || '验证码已发送', 'success');
+  } catch (e) { toast('发送失败: ' + e.message, 'error', 9000); }
+}
+
+async function loomySmsVerify() {
+  const phone = _('lmSmsPhone').value.trim();
+  const code = _('lmSmsCode').value.trim();
+  if (!phone || !code) { toast('请填写手机号和验证码', 'error'); return; }
+  if (!window._loomyMsgId) { toast('请先点「发送验证码」', 'error'); return; }
+  try {
+    const d = await api('POST', '/providers/loomy/sms/verify', {
+      phone: phone, code: code, msgid: window._loomyMsgId, name: _('lmSmsName').value.trim()
+    });
+    window._loomyMsgId = '';
+    _('lmSmsCode').value = '';
+    toast(d.message || '添加成功', 'success', 8000);
+    loadProviders();
+  } catch (e) { toast('验证失败: ' + e.message, 'error', 10000); }
+}
+
+async function addLoomySession() {
+  const session = _('lmSession').value.trim();
+  if (!session) { toast('请粘贴 session token', 'error'); return; }
+  try {
+    const d = await api('POST', '/providers/loomy/accounts/add', {
+      mode: 'session', session: session, name: _('lmSessionName').value.trim()
+    });
+    _('lmSession').value = '';
+    toast(d.message || '导入成功', 'success', 8000);
+    loadProviders();
+  } catch (e) { toast('导入失败: ' + e.message, 'error', 10000); }
+}
+
+async function delLoomyAccount(id) {
+  if (!confirm('确定删除该科大讯飞账号？')) return;
+  try {
+    await api('POST', '/providers/loomy/accounts/delete', { id: id });
+    toast('已删除', 'success');
+    loadProviders();
+  } catch (e) { toast('删除失败: ' + e.message, 'error'); }
+}
+
+async function refreshLoomyOne(id) {
+  try {
+    const d = await api('POST', '/providers/loomy/refresh', { id: id });
+    toast(d.message || '刷新完成', d.success ? 'success' : 'error', 8000);
+    loadProviders();
+  } catch (e) { toast('刷新失败: ' + e.message, 'error', 10000); }
+}
+
+async function refreshLoomyAccounts() {
+  try {
+    const d = await api('POST', '/providers/loomy/refresh', {});
+    toast(d.message || '刷新完成', d.success ? 'success' : 'error', 8000);
+    loadProviders();
+  } catch (e) { toast('刷新失败: ' + e.message, 'error', 10000); }
+}
+
+async function refreshLoomyModels() {
+  try {
+    const d = await api('POST', '/providers/loomy/models/refresh', {});
+    toast(d.message || '同步完成', 'success', 6000);
+    loadProviders();
+  } catch (e) { toast('同步失败: ' + e.message, 'error', 9000); }
+}
+
 // ========== 模型聊天 ==========
 let chatHistory = [];
 let chatPending = false;
@@ -2485,7 +2847,7 @@ async function fetchProviderModels() {
   const out = [];
   // priced 表示"上游目录给了价": WorkBuddy 看 credits 字段(x0.29 credits),
   // Qoder 看 priceFactor。两者都可能缺 —— 缺了就是未标价, 不能当成免费。
-  const srcs = [['workbuddy', 'workbuddy'], ['workbuddy-ai', 'workbuddy-ai'], ['qoder', 'qoder'], ['trae', 'trae']];
+  const srcs = [['workbuddy', 'workbuddy'], ['workbuddy-ai', 'workbuddy-ai'], ['qoder', 'qoder'], ['trae', 'trae'], ['loomy', 'loomy']];
   try {
     const d = await api('GET', '/providers/models');
     const data = d.data || {};
@@ -2519,7 +2881,9 @@ async function fetchProviderModels() {
           // 模态三态: true/false 来自上游目录, null 表示上游没给(后台显示"?"),
           // 点过"探测"后由 /models/probe-modality 的结果覆盖。
           image: m.image === undefined ? null : m.image,
-          video: m.video === undefined ? null : m.video
+          video: m.video === undefined ? null : m.video,
+          // 图片生成能力: loomy 目录按关键词判定, true 时走 /v1/images/generations
+          imageGen: m.imageGen === true
         });
       });
     });
@@ -2529,11 +2893,11 @@ async function fetchProviderModels() {
 
 // ========== 模型列表页(表格 + 筛选 + 模态探测) ==========
 // src 是内部路由键, group 是对外 /v1/models 的 owned_by。
-const MODEL_GROUP = { cline: 'cline-free', zen: 'opencode-zen', workbuddy: 'workbuddy', 'workbuddy-ai': 'workbuddy-ai', qoder: 'qoder', trae: 'trae' };
+const MODEL_GROUP = { cline: 'cline-free', zen: 'opencode-zen', workbuddy: 'workbuddy', 'workbuddy-ai': 'workbuddy-ai', qoder: 'qoder', trae: 'trae', loomy: 'loomy' };
 // 第三方 provider 的 src 值, 用于检测"某个来源一条模型都没拿到"(同步延迟/失败)
-const PROVIDER_GROUPS = ['workbuddy', 'workbuddy-ai', 'qoder', 'trae'];
+const PROVIDER_GROUPS = ['workbuddy', 'workbuddy-ai', 'qoder', 'trae', 'loomy'];
 // 计数条固定按这个顺序展示(含 0), 某个来源掉线时能一眼看出来
-const MODEL_GROUP_ORDER = ['cline-free', 'opencode-zen', 'workbuddy', 'workbuddy-ai', 'qoder', 'trae'];
+const MODEL_GROUP_ORDER = ['cline-free', 'opencode-zen', 'workbuddy', 'workbuddy-ai', 'qoder', 'trae', 'loomy'];
 let MODEL_ITEMS = [];
 let MODEL_DEF = '';
 let MODEL_SORT = { key: 'group', dir: 1 };
@@ -2607,6 +2971,7 @@ async function loadAllModels() {
       o.tags = [];
       if (o.tools) o.tags.push('工具');
       if (o.reason) o.tags.push('推理');
+      if (o.imageGen) o.tags.push('🎨 生图');
       items.push(o);
     };
     try {
@@ -2635,6 +3000,7 @@ async function loadAllModels() {
       available: m.available, probeNote: m.probeNote,
       multiplier: m.multiplier, price: m.price, priced: m.priced,
       reason: m.reason, tools: m.tools,
+      imageGen: m.imageGen,
       key: m.src + ':' + m.baseId
     }));
     let def = '';
