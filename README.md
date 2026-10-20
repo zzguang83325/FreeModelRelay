@@ -120,11 +120,12 @@
 git clone https://github.com/zzguang83325/FreeModelRelay.git
 cd FreeModelRelay
 
-go build -o FreeModelRelay .          # Linux / macOS
-go build -o FreeModelRelay.exe .      # Windows
+# 内置 sing-box 内核，必须带功能标签（uTLS 指纹 / hysteria2 / gRPC 传输）
+go build -tags "with_utls,with_quic,with_grpc" -o FreeModelRelay .          # Linux / macOS
+go build -tags "with_utls,with_quic,with_grpc" -o FreeModelRelay.exe .      # Windows
 ```
 
-Windows 上也可以用附带的脚本：
+Windows 上也可以用附带的脚本（已自动带上标签）：
 
 ```powershell
 .\build.ps1            # 等价于 go build
@@ -444,10 +445,36 @@ Cline 免费池和 opencode zen 不需要签到：前者整池不扣额度，后
 
 ---
 
-### 3.9 多账号与轮询
+### 3.9 科大讯飞 Loomy（点数制，含图片生成）
+
+科大讯飞的 Loomy 桌面助手内置多家大模型（Spark X2.5 / GLM-5.3-Flash / DeepSeek-V4-Flash / Kimi-k2.6 / Qwen-3.8-Max 等），登录态就是模型网关的 Bearer token（上游声明 `useSessionAuth`，不签发 API key），因此拿到 session 就等于拿到调用权。
+
+**三种添加方式**（后台 **科大讯飞** 页）：
+
+1. **手机号 + 密码**（推荐）：服务端直接调讯飞账号服务登录（RSA 加密 + HMAC-SHA1 签名，无验证码），密码保存在本机 `data/.loomy-accounts.json`，session 14 天到期前 3 天自动重登，无人值守
+2. **短信验证码**：点「发送验证码」收一次短信，填码验证入库（不保存密码，过期后需重新验证）
+3. **导入 Session**：粘贴其它部署导出的 session（校验通过即入库，过期后需手动换新）
+
+**计费是点数制**：`可用点数 = 永久点数 + 每日赠送`（赠送优先消耗、跨日重置）。模型显示名里的 `(x0.8)` 是倍率，比如 `spark-x · x0.1` 最便宜、`qwen-3.8-max · x12.0` 最贵。**与 WorkBuddy/Qoder/Trae 的签到积分不同，讯飞没有签到活动，点数要靠充值或官方赠送**——高频使用前先想清楚额度，后台页顶部可看每个账号的实时余额。402（点数不足）的账号自动冷却 10 分钟并换号。
+
+**图片生成**：讯飞带 3 个生图模型（Hy-Image-3.5-preview / doubao-seedream-5-lite / qwen-image-3.0-pro）。`/v1/models` 里这些条目带 `imageGen: true`，后台模型列表标 **🎨 生图**。调用走 OpenAI Images 协议：
+
+```bash
+curl http://127.0.0.1:9999/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -d '{"model":"loomy/qwen-image-3.0-pro","prompt":"一只戴宇航头盔的橘猫","n":1,"size":"1024x1024"}'
+```
+
+> 生图模型**不能**走 `/v1/chat/completions`（会返回明确报错指向 Images 端点）。另外上游对不认识的模型 id 会**静默回退**到 deepseek-v4-flash——如果响应里的 `model` 字段和你请求的不一致，说明 id 拼错了。
+
+**调用方式**：模型 id 用 `loomy/<模型ID>`、别名 `xf/<模型ID>` 强制路由。每个账号绑定独立设备标识（devid），但出口 IP 仍是统一出口代理的出口——讯飞是国内服务，一般直连即可。
+
+---
+
+### 3.10 多账号与轮询
 
 - **Cline**：策略可选，账号多了建议 `round_robin`；想榨干单个账号额度用 `fill`
-- **WorkBuddy / Qoder / Trae**：固定轮询，添加多个账号即自动分摊
+- **WorkBuddy / Qoder / Trae / 科大讯飞**：固定轮询，添加多个账号即自动分摊
 
 账号被标记冷却时不会参与轮询，恢复后自动回到队列，不需要手动干预。每个账号的积分和签到状态是独立的，所以多账号时建议每个都签到。
 
@@ -954,13 +981,14 @@ Authorization: Bearer sk-xxxxxxxx
 | Cline账号管理 | 账号列表、测试、重置、删除、导出 |
 | 导入Cline账号 | OAuth / 手动 Token / 批量导入 |
 | Cline设置 | 调度策略、API Keys、自定义请求头 |
-| 网络设置 | 统一出口代理：跟随系统代理开关、手动代理地址、当前生效状态 |
+| 网络设置 | 统一出口代理：跟随系统代理开关、手动代理地址、当前生效状态；机场订阅：订阅地址、启用开关、节点列表与状态 |
 | 请求日志 | 最近 100 条 LLM 请求的请求体与响应体 |
 | opencode 免费模型 | zen 开关、代理池、并发、重试、故障转移、压缩参数 |
 | WorkBuddy账号管理 | 账号、积分、签到、模型探测 |
 | WorkBuddy国际版 | 同上，国际版 |
 | Qoder账号管理 | PAT 账号、积分、签到、模型同步 |
 | Trae账号管理 | 桌面端账号导入、积分、签到、模型同步 |
+| 科大讯飞 | 手机号密码 / SMS / session 导入账号、点数余额、模型同步（含 🎨 生图标志） |
 | 模型聊天 | 直接在页面里试模型，不用切客户端 |
 
 ### 7.4 System Prompt 覆盖
@@ -999,6 +1027,27 @@ socks5h://13.14.15.16:1080
 上游返回 429 时，会按 `Retry-After` 冷却**当前这条**代理（上游没给就按 10 分钟计），并自动跳到下一个可用代理。面板「代理冷却」会显示每条代理的恢复时刻。
 
 > **zen 的代理池优先级最高。** 后台 opencode 页的「代理列表」填了就用池里的出口（按 `round_robin` / `random` / `fill` 轮询，单条可冷却）；没填就走全局统一出口代理（后台 **网络设置** 页的设置，或 Windows 系统代理），两者都没配才直连。WorkBuddy、Qoder、Trae 的配置文件里虽然留了 `proxies` 字段，但代码里并没有使用。
+
+#### 机场订阅（推荐，免自建代理）
+
+不想自己买代理？直接填机场订阅链接。在后台 **网络设置 → 机场订阅** 里：
+
+1. 打开「启用订阅」，把订阅地址粘贴进去（每行一个，支持多个机场）
+2. 点「保存并刷新」
+
+程序会自动完成剩下的事：
+
+- **拉取订阅**（以 v2rayNG UA 拉取，支持 base64 与明文两种格式）并解析节点，支持 **trojan**（含 ws/gRPC 传输）、**vless**（含 ws / Reality / gRPC）、**hysteria2** 分享链接
+- **本机起出口**：内置 sing-box 内核（`with_utls,with_quic,with_grpc` 标签构建），每个节点在 `127.0.0.1:11200` 起的空闲端口开一个本地 socks 出口，端口与节点绑定、重启后保持不变
+- **注入 zen 轮询池**：所有订阅节点自动追加到 zen 通道的出口池里参与轮询（排在手动代理列表之后），429 冷却等机制与手动代理完全一致
+- **自动维护**：默认每 6 小时（可调 30-1440 分钟）自动重新拉取；机场加/删节点时本地端口自动跟着增删；「仅更新订阅」按钮可手动强制刷新
+
+几个边界说明：
+
+- **订阅出口只给 zen 通道用**（对抗 IP 限流）。Cline / WorkBuddy / Qoder / Trae 等带账号风控的来源继续走统一出口代理，不会混用机场 IP。
+- 不可用节点（如拨号超时）会在运行期被冷却自动跳过，不影响其他节点；节点本身失效的（例如机场 hysteria2 全线下线）等下次订阅刷新时自然更新。
+- 节点配置状态持久化在 `data/.subscriptions.json`，重启后自动恢复上次的节点集合。
+- hysteria2 的 `pinSHA256`（hex）会自动转换为 sing-box 需要的 base64 格式。
 
 ### 8.2 上下文压缩
 

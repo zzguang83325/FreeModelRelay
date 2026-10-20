@@ -12,6 +12,9 @@
 # 账号池、各上游配置、探测缓存、日志都写在这里（含 token / PAT）
 /data/
 
+# go test 在包目录内运行时，ResolveDataPath 会以相对路径生成 data/
+/internal/app/data/
+
 # system prompt 覆盖文件（本地自定义）
 /override.md
 
@@ -26,6 +29,11 @@
 /.qoder-accounts.json
 /.qoder-config.json
 /.qoder-machine-id
+/.trae-accounts.json
+/.trae-config.json
+/.loomy-accounts.json
+/.loomy-config.json
+/.subscriptions.json
 /.modality-probe.json
 /models.raw.json
 /catalog.free.json

@@ -19,7 +19,8 @@ FreeModelRelay (默认 127.0.0.1:9999)
    ├──► WorkBuddy 中国版       (copilot.tencent.com, 桌面端凭据自动导入)
    ├──► WorkBuddy AI 国际版    (www.workbuddy.ai, 同上)
    ├──► Qoder 中国区           (gateway.qoder.com.cn, PAT 手动添加)
-   └──► Trae 中国区            (trae-api-cn.mchost.guru / api.trae.cn, 桌面端凭据自动导入)
+   ├──► Trae 中国区            (trae-api-cn.mchost.guru / api.trae.cn, 桌面端凭据自动导入)
+   └──► 科大讯飞 Loomy         (loomyad.xunfei.cn/api/v1, 手机号密码/SMS/session 导入, 点数制)
 ```
 
 模块名 `FreeModelRelay`。除标准库外只有两个直接依赖（均在 [proxy_pool.go](internal/app/proxy_pool.go#L20-L22) 引用）：`github.com/refraction-networking/utls`（zen 出口代理池的 TLS 指纹载体，`utls.UClient` + `HelloChrome_133`）与 `golang.org/x/net`（`http2` 传输 + `proxy` 的 socks5 拨号）；`brotli` / `klauspost/compress` / `x/crypto` / `x/sys` / `x/text` 都是这两者的间接依赖。
@@ -27,10 +28,11 @@ FreeModelRelay (默认 127.0.0.1:9999)
 ## 2. 构建与运行
 
 ```powershell
-go build -o FreeModelRelay.exe .
+# 内置 sing-box 内核, 必须带功能标签 (with_utls / with_quic / with_grpc)
+go build -tags "with_utls,with_quic,with_grpc" -o FreeModelRelay.exe .
 .\FreeModelRelay.exe           # 启动服务 (必须在项目根目录运行, 见 §16)
 .\FreeModelRelay.exe -start    # 编译+启动+自动打开管理后台
-.\build.ps1                         # 等价于 go build
+.\build.ps1                         # 等价于 go build (已自动带标签)
 .\build.ps1 -Test                   # 先 go test 再构建
 .\build.ps1 -All                    # 交叉编译 6 平台 → dist/ (与 CI 同一矩阵)
 ```
@@ -68,6 +70,7 @@ internal/
     qoder.go                Qoder 签名 / 模型同步 / 聊天转发 / 账号管理
     trae.go                 Trae 凭据 / 模型同步 / 聊天转发 / 签到 / 令牌续期
     trae_local.go           Trae 本机凭据解密导入 (storage.json / CLI token)
+    loomy_provider.go       科大讯飞 Loomy 账号池 / 模型同步 / 聊天转发 / 图片生成
     provider_chat.go        第三方 provider 路由 / 展示 id 装饰 / 三协议适配
     provider_sse.go         provider 侧 SSE 中继 / 聚合 / 内层错误信封解包
     provider_credits.go     各来源积分查询与签到
@@ -78,6 +81,7 @@ internal/
     modality.go             模型模态三态 (支持/不支持/未知) + 图片实调探测与缓存
     types.go                Account / AccountPool 数据结构
   cline/auth.go             WorkOS 设备授权 + token 刷新 (api.cline.bot)
+  loomy/                    科大讯飞 Loomy 协议层: HMAC-SHA1 签名登录 / RSA 密码加密 / 模型网关 / 点数查询
   kit/                      工具: data.go 路径 / ident.go ID 伪造 / http.go HTTP 客户端
 data/                       运行时数据 (gitignore, 相对路径)
 ```
@@ -97,6 +101,7 @@ data/                       运行时数据 (gitignore, 相对路径)
    - `workbuddy` / `workbuddy-ai`：[provider_chat.go](internal/app/provider_chat.go#L239) `handleWBAChat`
    - `qoder`：[provider_chat.go](internal/app/provider_chat.go#L274) `handleQoderChat`
    - `trae`：[provider_chat.go](internal/app/provider_chat.go#L308) `handleTraeChat`
+   - `loomy`：[provider_chat.go](internal/app/provider_chat.go#L323) `handleLoomyChat`（`/v1/images/generations` 走 [loomy_provider.go](internal/app/loomy_provider.go) `handleImagesGenerations`，目前唯一图片生成上游）
 7. **响应回写**：SSE 透传+归一化（`handleStreamResponseWithUsage`）或聚合为完整 JSON；provider 侧经 [provider_sse.go](internal/app/provider_sse.go#L37) `relayProviderSSE` / [provider_sse.go](internal/app/provider_sse.go#L98) `aggregateProviderSSE`；usage 回调记账
 
 ## 5. 模型路由与默认模型（改路由先看这节）
@@ -105,7 +110,7 @@ data/                       运行时数据 (gitignore, 相对路径)
 
 | 函数 | 位置 | 行为 |
 |------|------|------|
-| `resolveRouteModel(raw)` | [models.go](internal/app/models.go#L423) | 入口。先判 provider，再剥展示装饰归一成真实 id 后判 cline/zen；空/未知 → 回退默认模型。返回 `(model, route)`，route ∈ `zen`/`reject`/`cline`/`workbuddy`/`workbuddy-ai`/`qoder`/`trae` |
+| `resolveRouteModel(raw)` | [models.go](internal/app/models.go#L423) | 入口。先判 provider，再剥展示装饰归一成真实 id 后判 cline/zen；空/未知 → 回退默认模型。返回 `(model, route)`，route ∈ `zen`/`reject`/`cline`/`workbuddy`/`workbuddy-ai`/`qoder`/`trae`/`loomy` |
 | `routeModelAny(id)` | [models.go](internal/app/models.go#L412) | `routeModel` 的补全版：先 `providerRoute` 判第三方 provider，再落到 cline/zen 判定。**空 model 兜底必须走它** |
 | `routeModel(id)` | [zen.go](internal/app/zen.go#L132) | 只认识 zen/cline/reject：zen 免费→zen；zen 付费→reject；`opencode/` 前缀剥除；其余→cline |
 | `isKnownModel(id)` | [models.go](internal/app/models.go#L392) | 模型是否可识别：cline 模型表 ∪ zen 免费 ∪ 第三方 provider |
@@ -145,14 +150,14 @@ data/                       运行时数据 (gitignore, 相对路径)
 
 **为什么显示名必须进 id**：用户看到 `dfmodel` 不知道是什么模型。显示名来自上游目录（Qoder 的 `display_name`、WorkBuddy 目录的 name），跨来源同名时靠倍率段区分（WB CN `GLM-5.3 · x0.79` vs Qoder `GLM-5.3 · x0.8`）。
 
-**owned_by 分组**：`/v1/models` 各来源的 `owned_by` 分别是 `cline-free` / `opencode-zen` / `workbuddy` / `workbuddy-ai` / `qoder` / `trae`，客户端据此分组。WorkBuddy 两个变体的 `source` 都是 `workbuddy`，靠 `owned_by` 区分。
+**owned_by 分组**：`/v1/models` 各来源的 `owned_by` 分别是 `cline-free` / `opencode-zen` / `workbuddy` / `workbuddy-ai` / `qoder` / `trae` / `loomy`，客户端据此分组。WorkBuddy 两个变体的 `source` 都是 `workbuddy`，靠 `owned_by` 区分。loomy 条目额外带 `imageGen` 布尔（该模型是否只能走 `/v1/images/generations` 生图，不可 chat）。
 
 ### 5.2 第三方 provider 路由判定（providerRoute）
 
 按四级顺序（[provider_chat.go](internal/app/provider_chat.go#L475)）：
 
-1. **显式前缀**：`workbuddy/`、`wb/` → CN；`workbuddy-ai/`、`wb-ai/`、`workbuddyai/` → INTL；`qoder/`、`qd/` → Qoder；`trae/`、`tr/` → Trae（`opencode/` 前缀排除在外，它属于 zen 命名空间）
-2. **完整装饰串精确匹配**：`wbResolveDecorated(id)`（[workbuddy_client.go](internal/app/workbuddy_client.go#L658)）/ `qoderResolveDecorated(id)`（[qoder.go](internal/app/qoder.go#L666)）/ `traeResolveDecorated(id)`。**必须在剥装饰之前** —— 显示名跨 provider 冲突时倍率段是唯一区分，剥掉装饰再裸名解析会丢失归属
+1. **显式前缀**：`workbuddy/`、`wb/` → CN；`workbuddy-ai/`、`wb-ai/`、`workbuddyai/` → INTL；`qoder/`、`qd/` → Qoder；`trae/`、`tr/` → Trae；`loomy/`、`xf/`、`xunfei/` → 科大讯飞（`opencode/` 前缀排除在外，它属于 zen 命名空间）
+2. **完整装饰串精确匹配**：`wbResolveDecorated(id)`（[workbuddy_client.go](internal/app/workbuddy_client.go#L658)）/ `qoderResolveDecorated(id)`（[qoder.go](internal/app/qoder.go#L666)）/ `traeResolveDecorated(id)` / `loomyResolveDecorated(id)`。**必须在剥装饰之前** —— 显示名跨 provider 冲突时倍率段是唯一区分，剥掉装饰再裸名解析会丢失归属
 3. **裸名兜底**：剥装饰后 `wbResolveModel(stripped)`（[workbuddy_client.go](internal/app/workbuddy_client.go#L595)）/ `qoderResolveModel(stripped)` / `traeResolveModel(stripped)`，内部路由 id 或显示名都可命中（显示名走 `wbResolveByNameIn`，[workbuddy_client.go](internal/app/workbuddy_client.go#L626)）
 4. 返回 `""` → 交给 cline/zen 判定
 
