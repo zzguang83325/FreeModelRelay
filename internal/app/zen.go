@@ -790,10 +790,13 @@ func callZenAPI(params map[string]any, stream bool) (*http.Response, int, error)
 			}
 			if attempt < maxTry {
 				wait := delay
-				if retryAfter := parseRetryAfter(resp.Header.Get("Retry-After")); retryAfter > wait {
+				// Retry-After 仅在较小(≤30s)时采纳: 立即重试会用池内下一个可用代理重新拨号,
+				// 被限流的出口已进入冷却; 大数值(如 12h)表示该出口 IP 被上游封禁,
+				// 同步请求睡到那时毫无意义 —— 客户端早已超时, 且 failover 也会被阻塞。
+				if retryAfter := parseRetryAfter(resp.Header.Get("Retry-After")); retryAfter > wait && retryAfter <= 30*time.Second {
 					wait = retryAfter
 				}
-				log.Printf("  zen rate limited (%d), retry %d/%d after %v", resp.StatusCode, attempt+1, retries, wait)
+				log.Printf("  zen rate limited (%d), retry %d/%d after %v (冷却中的出口已跳过)", resp.StatusCode, attempt+1, retries, wait)
 				time.Sleep(kit.WithRetryJitter(wait))
 				delay *= 2
 				continue

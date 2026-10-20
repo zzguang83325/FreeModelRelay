@@ -720,11 +720,18 @@ func maskSubURL(raw string) string {
 func startSubscriptionManager() {
 	cfg := getSubConfig()
 	if cfg.Enabled && len(cfg.URLs) > 0 {
-		// 启动 3 秒后首次刷新(错开账号预热等启动任务)
+		// 启动 3 秒后首次刷新(错开账号预热等启动任务)。
+		// 换新进程重启时旧实例的监听端口可能尚未完全释放, 全部失败则退避重试。
 		go func() {
 			time.Sleep(3 * time.Second)
-			if err := refreshSubscriptions("启动"); err != nil {
-				log.Printf("[订阅] 启动刷新失败: %v", err)
+			for i := 0; i < 4; i++ {
+				err := refreshSubscriptions("启动")
+				if err == nil {
+					return
+				}
+				wait := time.Duration(5*(i+1)) * time.Second
+				log.Printf("[订阅] 启动刷新失败, %v 后重试(%d/3): %v", wait, i+1, err)
+				time.Sleep(wait)
 			}
 		}()
 	}
