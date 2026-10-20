@@ -88,6 +88,8 @@ h2{font-size:21px;margin-bottom:18px;font-weight:700;letter-spacing:.01em}
 .tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
 .tab-content{display:none;padding:18px}
 .tab-content.active{display:block;animation:rise .25s ease both}
+.subtab{display:none}
+.subtab.active{display:block;animation:rise .25s ease both}
 
 /* ===== 表格 ===== */
 .table-wrap{overflow-x:auto}
@@ -223,17 +225,15 @@ body:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
 <div class="sidebar">
 <h1><span class="logo">⚡</span><span class="brand-name">FreeModelRelay</span><button class="theme-toggle" onclick="toggleTheme()" title="切换主题"><span class="icon" id="themeIcon">🌙</span><span class="light-label">浅色</span><span class="dark-label">深色</span></button></h1>
 <div class="nav-item active" data-tab="dashboard"><span class="nav-ico">📊</span> 仪表盘</div>
-<div class="nav-item" data-tab="models"><span class="nav-ico">📋</span> 模型列表</div>
-<div class="nav-item" data-tab="accounts"><span class="nav-ico">👤</span> Cline账号管理</div>
-<div class="nav-item" data-tab="import"><span class="nav-ico">📥</span> 导入Cline账号</div>
-<div class="nav-item" data-tab="settings"><span class="nav-ico">⚙️</span> Cline设置</div>
-<div class="nav-item" data-tab="logs"><span class="nav-ico">📜</span> 请求日志</div>
+<div class="nav-item" data-tab="models"><span class="nav-ico">📋</span> 全部模型</div>
+<div class="nav-item" data-tab="cline"><span class="nav-ico">👤</span> Cline 账号</div>
 <div class="nav-item" data-tab="opencode"><span class="nav-ico">🌐</span> opencode 免费模型</div>
 <div class="nav-item" data-tab="workbuddy"><span class="nav-ico">🐧</span> WorkBuddy账号管理</div>
 <div class="nav-item" data-tab="workbuddy-ai"><span class="nav-ico">🐧</span> WorkBuddy国际版</div>
 <div class="nav-item" data-tab="qoder"><span class="nav-ico">🔷</span> Qoder账号管理</div>
 <div class="nav-item" data-tab="trae"><span class="nav-ico">🟣</span> Trae账号管理</div>
 <div class="nav-item" data-tab="chat"><span class="nav-ico">💬</span> 模型聊天</div>
+<div class="nav-item" data-tab="logs"><span class="nav-ico">📜</span> 请求日志</div>
 <div class="sidebar-footer">
   <div>管理面板: <a href="/admin/">/admin/</a></div>
   <div>API 地址: <span id="footerApiAddr">http://127.0.0.1:9999</span></div>
@@ -259,7 +259,7 @@ body:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
 </div>
 
 <div id="tab-models" class="tab-panel" style="display:none">
-<h2>📋 模型列表</h2>
+<h2>📋 全部模型</h2>
 <div class="section">
   <div class="section-body">
     <div style="display:flex;gap:14px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
@@ -306,7 +306,7 @@ body:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
 <div class="section">
   <div class="section-title">📡 调用路径与使用方法</div>
   <div class="section-body" style="font-size:13px;line-height:1.7">
-    <div class="hint" style="margin-bottom:10px">所有路径均可直接使用（鉴权关闭时 API Key 随意填写；已在「设置」生成密钥则需带 <code class="mono">Authorization: Bearer &lt;key&gt;</code>）。模型列表见「模型列表」页；客户端传未知模型名时自动回退到默认模型。</div>
+    <div class="hint" style="margin-bottom:10px">所有路径均可直接使用（鉴权关闭时 API Key 随意填写；已在「设置」生成密钥则需带 <code class="mono">Authorization: Bearer &lt;key&gt;</code>）。模型列表见「全部模型」页；客户端传未知模型名时自动回退到默认模型。</div>
     <table style="width:100%;font-size:12px;margin-bottom:12px">
       <thead><tr><th style="width:35%">Base URL</th><th>协议 / 适用客户端</th></tr></thead>
       <tbody>
@@ -337,12 +337,20 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
 </div>
 </div>
 
-<div id="tab-accounts" class="tab-panel" style="display:none">
+<div id="tab-cline" class="tab-panel" style="display:none">
+<h2>👤 Cline 账号</h2>
+<div class="tabs" id="clineTabs" style="margin-bottom:20px">
+  <div class="tab active" data-sub="accounts">👤 账号管理</div>
+  <div class="tab" data-sub="import">📥 导入账号</div>
+  <div class="tab" data-sub="settings">⚙️ 设置</div>
+</div>
+
+<div id="cline-accounts" class="subtab active">
   <div class="flex justify-between" style="margin-bottom:16px">
-  <h2>👤 Cline账号管理</h2>
+  <h2 style="font-size:17px">账号列表</h2>
   <div style="display:flex;gap:8px">
     <button class="btn btn-sm" onclick="exportAccounts()">📤 导出账号</button>
-    <button class="btn btn-primary btn-sm" onclick="switchTab('import')">➕ 添加</button>
+    <button class="btn btn-primary btn-sm" onclick="switchClineSub('import')">➕ 添加</button>
     <button class="btn btn-sm" onclick="loadAccounts()">🔄 刷新</button>
   </div>
 </div>
@@ -365,8 +373,7 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
 </div>
 </div>
 
-<div id="tab-import" class="tab-panel" style="display:none">
-<h2>📥 导入Cline账号</h2>
+<div id="cline-import" class="subtab">
 <div class="section">
   <div class="tabs" id="importTabs">
     <div class="tab active" data-tab="oauth">🔑 OAuth 浏览器登录</div>
@@ -430,8 +437,7 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
 </div>
 </div>
 
-<div id="tab-settings" class="tab-panel" style="display:none">
-<h2>⚙️ Cline设置</h2>
+<div id="cline-settings" class="subtab">
 
 <div class="section">
   <div class="section-title">🧠 可用模型 <span id="modelsProbeInfo" class="probe-pill" style="font-weight:normal"></span></div>
@@ -503,6 +509,7 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
       <button class="btn btn-danger" onclick="deleteAllKeys()">🗑️ 删除全部密钥</button>
     </div>
   </div>
+</div>
 </div>
 </div>
 
@@ -944,8 +951,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
     document.querySelectorAll('.tab-panel').forEach(e => e.style.display = 'none');
     _('tab-' + el.dataset.tab).style.display = 'block';
     if (el.dataset.tab === 'dashboard') { loadStats(); loadAccounts(); loadKeys(); loadCredits(); }
-    if (el.dataset.tab === 'accounts') loadAccounts();
-    if (el.dataset.tab === 'settings') { loadModels(); loadConfig(); }
+    if (el.dataset.tab === 'cline') { loadAccounts(); loadModels(); loadConfig(); }
     if (el.dataset.tab === 'logs') loadLogs();
     if (el.dataset.tab === 'opencode') { loadOcConfig(); loadOcModels(); loadOcStats(); }
     if (el.dataset.tab === 'workbuddy') { loadProviders(); loadWBConfig('workbuddy'); loadCredits(); }
@@ -964,8 +970,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab-panel').forEach(e => e.style.display = 'none');
   _('tab-' + name).style.display = 'block';
   if (name === 'dashboard') { loadStats(); loadAccounts(); loadKeys(); loadCredits(); }
-  if (name === 'accounts') loadAccounts();
-  if (name === 'settings') { loadModels(); }
+  if (name === 'cline') { loadAccounts(); loadModels(); loadConfig(); }
   if (name === 'logs') loadLogs();
   if (name === 'opencode') { loadOcConfig(); loadOcModels(); loadOcStats(); }
   if (name === 'workbuddy') { loadProviders(); loadWBConfig('workbuddy'); loadCredits(); }
@@ -975,6 +980,20 @@ function switchTab(name) {
   if (name === 'chat') loadChatModels();
   if (name === 'models') loadAllModels();
 }
+
+// Cline 子标签
+function switchClineSub(name) {
+  document.querySelectorAll('#clineTabs .tab').forEach(e => {
+    e.classList.toggle('active', e.dataset.sub === name);
+  });
+  document.querySelectorAll('#cline-accounts,#cline-import,#cline-settings').forEach(e => e.classList.remove('active'));
+  _('cline-' + name).classList.add('active');
+  if (name === 'accounts') loadAccounts();
+  if (name === 'settings') { loadModels(); loadConfig(); }
+}
+document.querySelectorAll('#clineTabs .tab').forEach(el => {
+  el.addEventListener('click', () => switchClineSub(el.dataset.sub));
+});
 
 // 导入子标签
 document.querySelectorAll('#importTabs .tab').forEach(el => {
@@ -1017,7 +1036,7 @@ async function loadAccounts() {
     const list = d.data.accounts;
     const tbody = _('accountTableBody');
     if (!list || list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无账号，前往 <a href="#" onclick="switchTab(\'import\')" style="color:var(--accent);cursor:pointer">导入Cline账号</a> 页添加</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无账号，前往 <a href="#" onclick="switchClineSub(\'import\')" style="color:var(--accent);cursor:pointer">导入账号</a> 页添加</td></tr>';
       return;
     }
     const sn = { active: '活跃', cooldown: '冷却', expired: '已过期' };
@@ -2616,7 +2635,11 @@ loadConfig();
 // 深链: /admin/#models 直接打开对应 tab(便于分享/排查时定位到具体页面)
 if (location.hash.length > 1) {
   const deep = location.hash.slice(1);
-  if (_('tab-' + deep)) switchTab(deep);
+  // 兼容旧的 Cline 三个页面锚点
+  if (deep === 'accounts' || deep === 'import' || deep === 'settings') {
+    switchTab('cline');
+    switchClineSub(deep);
+  } else if (_('tab-' + deep)) switchTab(deep);
 }
 loadCredits();
 setInterval(() => { loadStats(); }, 10000);
