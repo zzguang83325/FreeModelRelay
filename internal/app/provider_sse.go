@@ -13,6 +13,39 @@ import (
 	"FreeModelRelay/internal/kit"
 )
 
+// sseErrorText 把 SSE 错误帧里的 error 字段拼成人能读的一句话。
+//
+// 直接 fmt.Sprint 一个 map[string]any 会吐出 "map[message:xxx type:yyy]" ——
+// 那是 Go 的结构体直出, 用户看到的是字段名和方括号而不是错误信息, 排查时还
+// 得回头翻日志。error 可能是对象(合成帧 / 上游 OpenAI 形态), 也可能是裸
+// 字符串, 两种都要认。
+func sseErrorText(e any) string {
+	if s, ok := e.(string); ok {
+		return s
+	}
+	m, ok := e.(map[string]any)
+	if !ok {
+		return fmt.Sprint(e)
+	}
+	msg, _ := m["message"].(string)
+	typ, _ := m["type"].(string)
+	code, _ := m["code"].(string)
+	parts := make([]string, 0, 3)
+	if strings.TrimSpace(msg) != "" {
+		parts = append(parts, msg)
+	}
+	if strings.TrimSpace(typ) != "" {
+		parts = append(parts, "type="+typ)
+	}
+	if strings.TrimSpace(code) != "" {
+		parts = append(parts, "code="+code)
+	}
+	if len(parts) == 0 {
+		return fmt.Sprint(e)
+	}
+	return strings.Join(parts, " ")
+}
+
 // ============================================================================
 // Provider SSE 中继: 把非标准上游流(wb 的裸 OpenAI chunk / qoder 的双层信封)
 // 规整为客户端可直接消费的 OpenAI chat.completion.chunk 流。
@@ -128,7 +161,7 @@ func aggregateProviderSSE(upstream *http.Response, extract sseExtractor, onUsage
 		}
 		// 错误帧(合成或上游直出)在此终止聚合, 交给调用方返回 502。
 		if e, ok := obj["error"]; ok && e != nil {
-			aggErr = fmt.Errorf("upstream error: %s", kit.Truncate(fmt.Sprint(e), 400))
+			aggErr = fmt.Errorf("upstream error: %s", kit.Truncate(sseErrorText(e), 400))
 			return true
 		}
 		frames++
@@ -200,7 +233,7 @@ func aggregateProviderSSE(upstream *http.Response, extract sseExtractor, onUsage
 			var plain map[string]any
 			if json.Unmarshal([]byte(text), &plain) == nil {
 				if e, ok := plain["error"]; ok && e != nil {
-					return nil, fmt.Errorf("upstream error: %s", kit.Truncate(fmt.Sprint(e), 300))
+					return nil, fmt.Errorf("upstream error: %s", kit.Truncate(sseErrorText(e), 300))
 				}
 				if _, ok := plain["choices"]; ok {
 					if _, has := plain["object"]; !has {
@@ -401,6 +434,7 @@ func chatStreamToResponsesExtract(w http.ResponseWriter, upstream *http.Response
 
 	textEmitted := false
 	callEmitted := false
+	upstreamErr := ""
 	var curCallID, curCallName string
 	var curArgs strings.Builder
 	var outText strings.Builder
@@ -428,7 +462,8 @@ func chatStreamToResponsesExtract(w http.ResponseWriter, upstream *http.Response
 					continue
 				}
 				if e, ok := obj["error"]; ok && e != nil {
-					log.Printf("  provider responses stream upstream error: %s", kit.Truncate(fmt.Sprint(e), 400))
+					upstreamErr = kit.Truncate(fmt.Sprint(e), 400)
+					log.Printf("  provider responses stream upstream error: %s", upstreamErr)
 					break
 				}
 				if m, ok := obj["model"].(string); ok && m != "" {
@@ -539,6 +574,24 @@ func chatStreamToResponsesExtract(w http.ResponseWriter, upstream *http.Response
 	if callEmitted {
 		s.event("response.function_call_arguments.done", map[string]any{"type": "response.function_call_arguments.done", "item_id": "fc_" + curCallName, "output_index": 1, "arguments": curArgs.String()})
 		s.event("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": 1, "item": map[string]any{"type": "function_call", "id": "fc_" + curCallName, "call_id": curCallID, "name": curCallName, "arguments": curArgs.String(), "status": "completed"}})
+	}
+	if upstreamErr != "" {
+		// 上游在流中途报错(角色不合法 / 配额不足 / 内容审核等)。此前这里直接
+		// break 再发 response.completed, 客户端拿到的是"成功的空回答", 真实原因
+		// 只留在网关日志里 —— 排查成本极高。改为按协议发 response.failed。
+		s.event("response.failed", map[string]any{
+			"type": "response.failed",
+			"response": map[string]any{
+				"id":         s.respID,
+				"object":     "response",
+				"created_at": time.Now().Unix(),
+				"status":     "failed",
+				"model":      "",
+				"output":     []any{},
+				"error":      map[string]any{"code": "upstream_error", "message": upstreamErr},
+			},
+		})
+		return
 	}
 	s.event("response.completed", map[string]any{
 		"type": "response.completed",

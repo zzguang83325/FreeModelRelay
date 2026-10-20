@@ -161,6 +161,16 @@ func prepareProviderChat(route string, params map[string]any) (*http.Response, s
 			return nil, nil, "", err
 		}
 		return resp, qoderSSEExtract, m.Key, nil
+	case "trae":
+		if !getTraeConfig().Enabled {
+			return nil, nil, "", providerErr(http.StatusServiceUnavailable, "api_error",
+				"trae upstream disabled in /admin/ settings")
+		}
+		resp, m, err := traePrepareChat(params)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		return resp, traeSSEExtract, m.Key, nil
 	}
 	return nil, nil, "", providerErr(http.StatusBadRequest, "invalid_request_error",
 		"model %q is not a third-party provider model", route)
@@ -195,7 +205,7 @@ func handleProviderAnthropicMessage(w http.ResponseWriter, route string, req ant
 		return
 	}
 	out = normalizeOpenAIResponse(out)
-	anthropicResp := openAIToAnthropic(out)
+	anthropicResp := openAIToAnthropicSchemas(out, toolSchemas)
 	if tc, ok := getNested(out, "choices", 0, "message", "tool_calls").([]any); ok && len(tc) > 0 {
 		anthropicResp["stop_reason"] = "tool_use"
 	}
@@ -296,6 +306,40 @@ func handleQoderChat(w http.ResponseWriter, r *http.Request, params map[string]a
 	out, err := aggregateProviderSSE(resp, qoderSSEExtract, usageFn)
 	if err != nil {
 		log.Printf("  qoder aggregate error: %v", err)
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error": map[string]string{"message": err.Error(), "type": "api_error"},
+		})
+		return
+	}
+	out = normalizeOpenAIResponse(out)
+	writeJSON(w, http.StatusOK, out)
+}
+
+func handleTraeChat(w http.ResponseWriter, r *http.Request, params map[string]any) {
+	if !getTraeConfig().Enabled {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error": map[string]string{"message": "trae upstream disabled in /admin/ settings", "type": "api_error"},
+		})
+		return
+	}
+	isStream, _ := params["stream"].(bool)
+	resp, m, err := traePrepareChat(params)
+	if err != nil {
+		log.Printf("  trae api error: %v", err)
+		writeProviderError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+	log.Printf("  trae: model=%s stream=%v", m.Key, isStream)
+
+	usageFn := providerUsageFn(m.Key)
+	if isStream {
+		relayProviderSSE(w, resp, traeSSEExtract, usageFn)
+		return
+	}
+	out, err := aggregateProviderSSE(resp, traeSSEExtract, usageFn)
+	if err != nil {
+		log.Printf("  trae aggregate error: %v", err)
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error": map[string]string{"message": err.Error(), "type": "api_error"},
 		})
@@ -464,6 +508,30 @@ func providerModelList() []map[string]any {
 			})
 		}
 	}
+	if getTraeConfig().Enabled {
+		for _, m := range traeModelList() {
+			// 只有上游真的给了 credit_multiplier 才能判免费: 键缺失时 mult 也是 0,
+			// 但那是"上游没标价", 照 free 处理会教用户以为能免费用。
+			cost := "paid"
+			mult, _ := m["priceFactor"].(float64)
+			if priced, _ := m["priced"].(bool); priced && mult == 0 {
+				cost = "free"
+			}
+			name, _ := m["name"].(string)
+			baseID, _ := m["baseId"].(string)
+			out = append(out, map[string]any{
+				"id":       providerDecorateID("trae", baseID, name, mult, cost == "free"),
+				"object":   "model",
+				"created":  time.Now().UnixMilli(),
+				"owned_by": "trae",
+				"source":   "trae",
+				"status":   "active",
+				"cost":     cost,
+				"context":  m["context"],
+				"output":   m["output"],
+			})
+		}
+	}
 	return out
 }
 
@@ -484,6 +552,8 @@ func providerRoute(id string) string {
 				return wbVariantINTL.ID
 			case "qoder", "qd":
 				return "qoder"
+			case "trae", "tr":
+				return "trae"
 			}
 		}
 	}
@@ -496,6 +566,9 @@ func providerRoute(id string) string {
 	if _, ok := qoderResolveDecorated(id); ok {
 		return "qoder"
 	}
+	if _, ok := traeResolveDecorated(id); ok {
+		return "trae"
+	}
 	// 裸名兜底: 内部路由 id / 显示名
 	stripped := providerStripDecorate(id)
 	if m, ok := wbResolveModel(stripped); ok {
@@ -503,6 +576,9 @@ func providerRoute(id string) string {
 	}
 	if _, ok := qoderResolveModel(stripped); ok {
 		return "qoder"
+	}
+	if _, ok := traeResolveModel(stripped); ok {
+		return "trae"
 	}
 	return ""
 }
@@ -512,7 +588,7 @@ func providerStripPrefix(id string) string {
 	id = providerStripDecorate(id)
 	if i := strings.Index(id, "/"); i > 0 {
 		switch id[:i] {
-		case "workbuddy", "wb", "workbuddy-ai", "wb-ai", "workbuddyai", "qoder", "qd":
+		case "workbuddy", "wb", "workbuddy-ai", "wb-ai", "workbuddyai", "qoder", "qd", "trae", "tr":
 			return strings.TrimSpace(id[i+1:])
 		}
 	}
@@ -524,7 +600,7 @@ func providerStripPrefix(id string) string {
 // 静默交给 cline 账号池(用 cline 的额度跑另一个上游, 且不报错)。
 func isProviderRoute(route string) bool {
 	switch route {
-	case wbVariantCN.ID, wbVariantINTL.ID, "qoder":
+	case wbVariantCN.ID, wbVariantINTL.ID, "qoder", "trae":
 		return true
 	}
 	return false
@@ -540,6 +616,8 @@ func providerNameOf(variant string) string {
 		return wbVariantINTL.Provider
 	case "qoder":
 		return "qoder"
+	case "trae":
+		return "trae"
 	}
 	return variant
 }
@@ -562,6 +640,12 @@ func providerPublicIDs() map[string]bool {
 	}
 	wbModelsMu.RUnlock()
 	for _, m := range qoderModelSnapshot() {
+		if _, ok := seen[m.Key]; ok {
+			dup[m.Key] = true
+		}
+		seen[m.Key] = struct{}{}
+	}
+	for _, m := range traeModelSnapshot() {
 		if _, ok := seen[m.Key]; ok {
 			dup[m.Key] = true
 		}

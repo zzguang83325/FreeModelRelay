@@ -98,24 +98,96 @@ func wbIsAlreadyCheckin(msg string) bool {
 
 // wbPostJSON 向 WB 上游发一个 JSON POST。非 2xx 不算传输错误(daily-checkin 用
 // HTTP 400 + code!=0 表达"今天已签到"), 所以把状态码一并交回调用方判断。
+// 若上游回 401 且账号持有 refreshToken, 先刷新再重试一次(dsh-multi-router 同口径),
+// 避免本机桌面端令牌过期后签到/额度静默失败。
 func wbPostJSON(v *wbVariant, a *wbAccount, path string, payload any, timeout time.Duration) ([]byte, int, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return nil, 0, err
 	}
-	req, err := http.NewRequest(http.MethodPost, v.ChatBase+path, bytes.NewReader(raw))
+	do := func() ([]byte, int, error) {
+		req, err := http.NewRequest(http.MethodPost, v.ChatBase+path, bytes.NewReader(raw))
+		if err != nil {
+			return nil, 0, err
+		}
+		wbCommonHeaders(req, a, v)
+		client := &http.Client{Timeout: timeout}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, 0, err
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return body, resp.StatusCode, nil
+	}
+	body, status, err := do()
 	if err != nil {
 		return nil, 0, err
 	}
-	wbCommonHeaders(req, a, v)
-	client := &http.Client{Timeout: timeout}
+	if status == 401 && a != nil && a.RefreshToken != "" {
+		if rerr := wbRefreshAccessToken(v, a); rerr == nil {
+			if b2, s2, e2 := do(); e2 == nil {
+				return b2, s2, nil
+			}
+		}
+	}
+	return body, status, nil
+}
+
+// wbRefreshAccessToken 用 refreshToken 换新 accessToken(CN/INTL 共用 ChatBase 同形路径)。
+// 仅作本地会话兜底: 本机桌面端 normally 自己维护令牌新鲜度, 这里只在 401 时补一刀。
+func wbRefreshAccessToken(v *wbVariant, a *wbAccount) error {
+	if a.RefreshToken == "" {
+		return fmt.Errorf("无 refreshToken, 无法刷新")
+	}
+	url := strings.TrimRight(v.ChatBase, "/") + "/v2/plugin/auth/token/refresh"
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Encoding", "identity")
+	req.Header.Set("X-Refresh-Token", a.RefreshToken)
+	req.Header.Set("X-Auth-Refresh-Source", "plugin")
+	req.Header.Set("Origin", v.Origin)
+	req.Header.Set("User-Agent", wbUserAgent(v))
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	return body, resp.StatusCode, nil
+	var parsed struct {
+		Code int `json:"code"`
+		Data struct {
+			AccessToken  string `json:"accessToken"`
+			RefreshToken string `json:"refreshToken"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return fmt.Errorf("刷新响应解析失败: %w", err)
+	}
+	if parsed.Code != 0 || parsed.Data.AccessToken == "" {
+		return fmt.Errorf("刷新失败 code=%d", parsed.Code)
+	}
+	// 校验新令牌身份与本地一致, 防止串号。
+	if claims := wbJWTClaims(parsed.Data.AccessToken); claims != nil {
+		if sub, _ := claims["sub"].(string); sub != "" && a.UID != "" && sub != a.UID {
+			return fmt.Errorf("刷新返回的账号身份不一致")
+		}
+	}
+	a.AccessToken = parsed.Data.AccessToken
+	if parsed.Data.RefreshToken != "" {
+		a.RefreshToken = parsed.Data.RefreshToken
+	}
+	if claims := wbJWTClaims(a.AccessToken); claims != nil {
+		if exp, ok := claims["exp"].(float64); ok && exp > 0 {
+			a.ExpiresAt = int64(exp * 1000)
+		}
+	}
+	return nil
 }
 
 // wbFetchCredits 查询积分余额。上游 code!=0 或 HTTP 非 200 都返回错误, 由调用方
@@ -297,7 +369,10 @@ type qoderQuota struct {
 
 // qoderOpenAPIReq 走 openapi.qoder.com.cn 的原生请求(PAT 换成 jobToken 后使用)。
 // 这些端点不吃 Cosy 签名, 但要求 Cosy-MachineId/Token 双写同一 machineId。
-func qoderOpenAPIReq(a *qoderAccount, method, path string, payload []byte) (*http.Response, error) {
+// clientType 区分调用场景: 普通业务(chat/quota/userinfo)用 qoderClientType("5",
+// IDE 标识); 签到(campaigns)必须用 qoderCheckinClientType("10", desktop 标识),
+// 否则上游按标识过滤返回空活动列表(dsh-multi-router 已实测确认)。
+func qoderOpenAPIReq(a *qoderAccount, clientType, method, path string, payload []byte) (*http.Response, error) {
 	if err := qoderEnsureToken(a); err != nil {
 		return nil, err
 	}
@@ -315,7 +390,7 @@ func qoderOpenAPIReq(a *qoderAccount, method, path string, payload []byte) (*htt
 	h.Set("authorization", "Bearer "+a.JobToken)
 	h.Set("user-agent", "qoder/"+qoderIdeVersion)
 	h.Set("cosy-version", "1.0.1")
-	h.Set("cosy-clienttype", qoderClientType)
+	h.Set("cosy-clienttype", clientType)
 	if a.MachineID != "" {
 		h.Set("Cosy-MachineId", a.MachineID)
 		h.Set("Cosy-MachineToken", a.MachineID)
@@ -329,7 +404,7 @@ func qoderOpenAPIReq(a *qoderAccount, method, path string, payload []byte) (*htt
 
 // qoderFetchQuota 查询 Qoder 积分额度。
 func qoderFetchQuota(a *qoderAccount) (*qoderQuota, error) {
-	resp, err := qoderOpenAPIReq(a, http.MethodGet, "/api/v2/quota/usage", nil)
+	resp, err := qoderOpenAPIReq(a, qoderClientType, http.MethodGet, "/api/v2/quota/usage", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -386,9 +461,55 @@ func jsonField(m map[string]any, names ...string) string {
 	return ""
 }
 
+// jsonEpochSec 兼容秒/毫秒与字符串三种形态, 取出 Unix 秒(缺失/非法返回 0)。
+// 上游 campaign 的 startAt/endAt 为秒级时间戳(dsh-multi-router 实测 *1e3 转毫秒比较)。
+func jsonEpochSec(m map[string]any, names ...string) int64 {
+	for _, n := range names {
+		v, ok := m[n]
+		if !ok {
+			continue
+		}
+		switch t := v.(type) {
+		case float64:
+			if t > 0 {
+				return int64(t)
+			}
+		case int64:
+			if t > 0 {
+				return t
+			}
+		case json.Number:
+			if i, err := t.Int64(); err == nil && i > 0 {
+				return i
+			}
+		case string:
+			if s := strings.TrimSpace(t); s != "" {
+				if f, err := strconv.ParseFloat(s, 64); err == nil && f > 0 {
+					return int64(f)
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// qoderCampaignActive 判断活动是否在当前时间窗内(缺失边界视为不限制)。
+func qoderCampaignActive(c map[string]any) bool {
+	nowMs := time.Now().UnixMilli()
+	start := jsonEpochSec(c, "startAt", "start_at")
+	end := jsonEpochSec(c, "endAt", "end_at")
+	if start > 0 && start*1000 > nowMs {
+		return false // 还没开始
+	}
+	if end > 0 && end*1000 <= nowMs {
+		return false // 已结束
+	}
+	return true
+}
+
 // qoderCheckinCampaigns 返回 (可领取列表, 全部参活列表)。
 func qoderCheckinCampaigns(a *qoderAccount) (claimable []map[string]any, all []map[string]any, err error) {
-	resp, err := qoderOpenAPIReq(a, http.MethodGet, "/sash/api/v1/me/campaigns", nil)
+	resp, err := qoderOpenAPIReq(a, qoderCheckinClientType, http.MethodGet, "/sash/api/v1/me/campaigns", nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -408,7 +529,8 @@ func qoderCheckinCampaigns(a *qoderAccount) (claimable []map[string]any, all []m
 			continue
 		}
 		all = append(all, c)
-		if jsonField(c, "claimStatus", "claim_status") == "CLAIMABLE" {
+		// 只把"当前在时间窗内且可领取"的算作 claimable, 避免去领未开放/已结束的活动。
+		if jsonField(c, "claimStatus", "claim_status") == "CLAIMABLE" && qoderCampaignActive(c) {
 			claimable = append(claimable, c)
 		}
 	}
@@ -443,7 +565,7 @@ func qoderRunCheckin(a *qoderAccount) (checkinResult, error) {
 				}
 			}
 		}
-		resp, err := qoderOpenAPIReq(a, http.MethodPost,
+		resp, err := qoderOpenAPIReq(a, qoderCheckinClientType, http.MethodPost,
 			"/sash/api/v1/me/campaigns/"+urlPathEscape(id)+"/claim", []byte("{}"))
 		if err != nil {
 			return checkinResult{}, err

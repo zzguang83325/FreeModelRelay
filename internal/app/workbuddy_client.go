@@ -717,8 +717,12 @@ func wbBuildBody(params map[string]any, m wbModelInfo) map[string]any {
 	} else {
 		body["stream_options"] = map[string]any{"include_usage": true}
 	}
-	// 上游风控要求 messages 首条为 system prompt
+	// 上游风控要求 messages 首条为 system prompt。
+	// 先做角色归一: Codex 的 developer 角色若不折叠成 system, hasSystem 判为
+	// false, 补一条 system 后 developer 仍在原地 —— 上游照样 400。
 	if msgs, ok := body["messages"].([]any); ok {
+		msgs = cleanMessages(msgs)
+		body["messages"] = msgs
 		hasSystem := false
 		for _, raw := range msgs {
 			if mm, ok := raw.(map[string]any); ok && mm["role"] == "system" {

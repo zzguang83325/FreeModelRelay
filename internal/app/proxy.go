@@ -1,10 +1,10 @@
 package app
 
 import (
-	"bufio"
-	"bytes"
 	"FreeModelRelay/internal/cline"
 	"FreeModelRelay/internal/kit"
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -235,6 +235,10 @@ func StartProxy(host string, port int) error {
 			params["model"] = model
 			handleQoderChat(w, r, params)
 			return
+		case "trae":
+			params["model"] = model
+			handleTraeChat(w, r, params)
+			return
 		case "reject":
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error": map[string]string{"message": fmt.Sprintf("model %q is a paid zen model; only free zen models are proxied", model), "type": "invalid_request_error"},
@@ -453,17 +457,78 @@ func handleZenChat(w http.ResponseWriter, r *http.Request, params map[string]any
 	tracker.finish(true, resp.StatusCode)
 }
 
+// chatRoleAliases 把上游不认识的消息角色折叠到它接受的集合。
+//
+// Responses API 与新版 OpenAI SDK 用 developer 角色承载系统指令, 而 cline /
+// workbuddy / qoder 只认 system/assistant/user/tool/function, 原样透传会直接
+// 400: "'developer' is not one of ['system','assistant','user','tool','function']"。
+// Codex CLI 走 /v1/responses 时 messages[0].role 就是 developer —— 整条请求曾
+// 因此失败, 而网关只在上游错误里留了一行日志。
+var chatRoleAliases = map[string]string{
+	"developer": "system",
+}
+
+// cleanMessages 归一化上游消息: 角色别名折叠 + 多条 system 合并成首条。
+//
+// 上游普遍要求 system 出现在开头(workbuddy 直接要求首条必须是 system), 而
+// Responses 的 instructions 与客户端自带的 developer 上下文会各占一条。合并
+// 比丢弃安全 —— 按出现顺序拼接, 不改变语义。
+//
+// 只合并纯文本 system: 含多模态内容的 system 保留原位, 合并会丢信息。
 func cleanMessages(messages []any) []any {
-	cleaned := make([]any, 0, len(messages))
-	for _, m := range messages {
-		msg, ok := m.(map[string]any)
+	if len(messages) == 0 {
+		return messages
+	}
+
+	normalized := make([]any, 0, len(messages))
+	sysPos := make([]int, 0, 2)
+	sysText := make([]string, 0, 2)
+	sysAllText := true
+
+	for _, raw := range messages {
+		msg, ok := raw.(map[string]any)
 		if !ok {
-			cleaned = append(cleaned, m)
+			normalized = append(normalized, raw)
 			continue
 		}
-		cleaned = append(cleaned, msg)
+		role, _ := msg["role"].(string)
+		if alias, ok := chatRoleAliases[role]; ok {
+			// 不改调用方传入的 map: 同一份 params 可能被重试路径复用
+			clone := make(map[string]any, len(msg)+1)
+			for k, v := range msg {
+				clone[k] = v
+			}
+			clone["role"] = alias
+			msg = clone
+			role = alias
+		}
+		if role == "system" {
+			sysPos = append(sysPos, len(normalized))
+			if txt, ok := msg["content"].(string); ok {
+				sysText = append(sysText, txt)
+			} else {
+				sysAllText = false
+			}
+		}
+		normalized = append(normalized, msg)
 	}
-	return cleaned
+
+	if len(sysPos) < 2 || !sysAllText {
+		return normalized
+	}
+
+	drop := make(map[int]bool, len(sysPos))
+	for _, p := range sysPos {
+		drop[p] = true
+	}
+	out := make([]any, 0, len(normalized)-len(sysPos)+1)
+	out = append(out, map[string]any{"role": "system", "content": strings.Join(sysText, "\n\n")})
+	for i, m := range normalized {
+		if !drop[i] {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func buildUpstreamBody(params map[string]any, stream bool) map[string]any {
@@ -1284,6 +1349,28 @@ func extractToolSchemas(tools json.RawMessage) map[string]map[string]bool {
 
 // filterToolInput 将工具参数裁剪到客户端 schema 允许的字段内；
 // 找不到 schema 或过滤后为空时保留原参数，避免丢参数。
+// resolveClientToolName 把上游返回的工具名还原成客户端声明的写法。
+//
+// zen 免费通道会把客户端的 Bash / Read 归一成官方小写名(bash / read)再发给
+// 上游(见 zen.go applyZenToolAliases), 模型回来的就是小写名。客户端只认自己
+// 声明的那个写法, 不改回来 Claude Code 会把工具调用当成未知工具。
+//
+// 精确匹配优先; 没有再按大小写不敏感找客户端声明过的名字。
+func resolveClientToolName(name string, schemas map[string]map[string]bool) string {
+	if name == "" || len(schemas) == 0 {
+		return name
+	}
+	if _, ok := schemas[name]; ok {
+		return name
+	}
+	for client := range schemas {
+		if strings.EqualFold(client, name) {
+			return client
+		}
+	}
+	return name
+}
+
 func filterToolInput(name string, input map[string]any, schemas map[string]map[string]bool) map[string]any {
 	allowed, ok := schemas[name]
 	if !ok || len(allowed) == 0 {
@@ -1323,7 +1410,12 @@ func anthropicContentToString(v any) string {
 	return ""
 }
 
+// openAIToAnthropic 无 toolSchemas 的旧入口(不还原工具名, 供内部调用方兼容)。
 func openAIToAnthropic(openAI map[string]any) map[string]any {
+	return openAIToAnthropicSchemas(openAI, nil)
+}
+
+func openAIToAnthropicSchemas(openAI map[string]any, toolSchemas map[string]map[string]bool) map[string]any {
 	out := map[string]any{
 		"id":    "msg_" + fmt.Sprintf("%x", time.Now().UnixMilli()),
 		"type":  "message",
@@ -1391,6 +1483,7 @@ func openAIToAnthropic(openAI map[string]any) map[string]any {
 					if name == "" {
 						continue
 					}
+					name = resolveClientToolName(name, toolSchemas)
 					block := map[string]any{
 						"type":  "tool_use",
 						"id":    id,
@@ -1528,7 +1621,7 @@ func handleAnthropicMessages(w http.ResponseWriter, r *http.Request) {
 			usageFn(u)
 		}
 		out = normalizeOpenAIResponse(out)
-		anthropicResp := openAIToAnthropic(out)
+		anthropicResp := openAIToAnthropicSchemas(out, toolSchemas)
 		if tc, ok := getNested(out, "choices", 0, "message", "tool_calls").([]any); ok && len(tc) > 0 {
 			anthropicResp["stop_reason"] = "tool_use"
 		}
@@ -1643,7 +1736,7 @@ func handleZenAnthropic(w http.ResponseWriter, r *http.Request, req anthropicReq
 		}
 	}
 	chatOut = normalizeOpenAIResponse(chatOut)
-	anthropicResp := openAIToAnthropic(chatOut)
+	anthropicResp := openAIToAnthropicSchemas(chatOut, toolSchemas)
 	if tc, ok := getNested(chatOut, "choices", 0, "message", "tool_calls").([]any); ok && len(tc) > 0 {
 		anthropicResp["stop_reason"] = "tool_use"
 	}
@@ -1725,6 +1818,8 @@ func handleAnthropicStreamExtract(w http.ResponseWriter, upstream *http.Response
 			log.Printf("  tool_use missing name, skipping (id=%s)", acc.id)
 			return
 		}
+		// 先还原成客户端声明的工具名, 再按它的 schema 裁剪参数
+		acc.name = resolveClientToolName(acc.name, toolSchemas)
 		idx := nextIndex()
 		id := acc.id
 		if id == "" {

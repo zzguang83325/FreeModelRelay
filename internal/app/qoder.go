@@ -36,11 +36,12 @@ import (
 // ============================================================================
 
 const (
-	qoderIdeVersion  = "1.1.47"
-	qoderClientType  = "5"
-	qoderMachineType = "5"
-	qoderDataPolicy  = "disagree"
-	qoderLoginVer    = "v2"
+	qoderIdeVersion        = "1.1.47"
+	qoderClientType        = "5"  // chat / quota / userinfo 用 IDE 标识
+	qoderCheckinClientType = "10" // 签到(活动/campaigns)接口按 desktop 标识过滤, IDE 标识会返回空列表
+	qoderMachineType       = "5"
+	qoderDataPolicy        = "disagree"
+	qoderLoginVer          = "v2"
 
 	qoderBaseURL    = "https://gateway.qoder.com.cn/"
 	qoderOpenAPIURL = "https://openapi.qoder.com.cn"
@@ -711,6 +712,10 @@ func qoderBuildBody(params map[string]any, m qoderModelInfo) map[string]any {
 	}
 	if _, ok := body["messages"]; !ok {
 		body["messages"] = []any{}
+	}
+	// 角色归一: 上游只认 system/assistant/user/tool/function, developer 直接 400
+	if msgs, ok := body["messages"].([]any); ok {
+		body["messages"] = cleanMessages(msgs)
 	}
 	return body
 }

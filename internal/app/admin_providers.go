@@ -13,10 +13,11 @@ import (
 // ============================================================================
 // 第三方 provider 后台管理 API (/admin/api/providers/...)
 //
-// 三个 provider:
+// 四个 provider:
 //   workbuddy     WorkBuddy (CN)    —— 复用本机 WorkBuddy 桌面端登录
 //   workbuddy-ai  WorkBuddy AI (INTL) —— 复用本机 WorkBuddy AI 桌面端登录
 //   qoder         Qoder (China)     —— 手动填入个人访问令牌 (pat-…)
+//   trae          Trae (CN)         —— 从本机 storage.json 解密导入(同 WorkBuddy)
 // ============================================================================
 
 // GET /admin/api/providers/status
@@ -29,6 +30,7 @@ func handleProvidersStatus(w http.ResponseWriter, r *http.Request) {
 		"workbuddy":    wbStatusPayload(wbVariantCN),
 		"workbuddy-ai": wbStatusPayload(wbVariantINTL),
 		"qoder":        qoderStatusPayload(),
+		"trae":         traeStatusPayload(),
 	}})
 }
 
@@ -212,6 +214,28 @@ func handleProviderConfigUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		setQoderConfig(cur)
 		writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: "配置已保存", Data: getQoderConfig()})
+	case "trae":
+		cur := getTraeConfig()
+		var patch struct {
+			Enabled    *bool `json:"enabled"`
+			FreeOnly   *bool `json:"freeOnly"`
+			MaxRetries *int  `json:"maxRetries"`
+		}
+		if err := readJSONBody(r, &patch); err != nil {
+			writeAPI(w, http.StatusBadRequest, apiResponse{Error: "invalid JSON: " + err.Error()})
+			return
+		}
+		if patch.Enabled != nil {
+			cur.Enabled = *patch.Enabled
+		}
+		if patch.FreeOnly != nil {
+			cur.FreeOnly = *patch.FreeOnly
+		}
+		if patch.MaxRetries != nil && *patch.MaxRetries >= 0 {
+			cur.MaxRetries = *patch.MaxRetries
+		}
+		setTraeConfig(cur)
+		writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: "配置已保存", Data: getTraeConfig()})
 	default:
 		writeAPI(w, http.StatusNotFound, apiResponse{Error: "unknown provider"})
 	}
@@ -353,6 +377,78 @@ func handleQoderAccountDelete(w http.ResponseWriter, r *http.Request) {
 	writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: "已删除账号"})
 }
 
+// POST /admin/api/providers/trae/import  从本机 Trae 桌面端/CLI 导入账号
+//
+// Trae 把登录态写进 User/globalStorage/storage.json, 加密是纯静态的(四个
+// 硬编码盐值, 不掺机器指纹), 所以能像 WorkBuddy 那样直接读 —— 解密与路径
+// 扫描见 trae_local.go。导入时会一并取出设备密钥对, 否则新版刷新接口签不
+// 出 DeviceProof。
+func handleTraeImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeAPI(w, http.StatusMethodNotAllowed, apiResponse{Error: "method not allowed"})
+		return
+	}
+	accounts, notes, err := traeImportLocalAccounts()
+	if err != nil {
+		writeAPI(w, http.StatusBadGateway, apiResponse{
+			Error:   "导入失败: " + err.Error(),
+			Message: strings.Join(notes, "; "),
+		})
+		return
+	}
+	msg := fmt.Sprintf("已导入 %d 个 Trae 账号", len(accounts))
+	if len(notes) > 0 {
+		msg += "；" + strings.Join(notes, "; ")
+	}
+	writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: msg})
+}
+
+// POST /admin/api/providers/trae/accounts/add  body: 凭据 JSON
+// 兜底入口: 本机导入走 /providers/trae/import, 这里给从别的机器搬账号用。
+func handleTraeAccountAdd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeAPI(w, http.StatusMethodNotAllowed, apiResponse{Error: "method not allowed"})
+		return
+	}
+	var cred traeCredentialInput
+	if err := readJSONBody(r, &cred); err != nil {
+		writeAPI(w, http.StatusBadRequest, apiResponse{Error: "invalid JSON: " + err.Error()})
+		return
+	}
+	acc, err := traeAddAccount(cred)
+	if err != nil {
+		writeAPI(w, http.StatusBadGateway, apiResponse{
+			Error:   "凭据无效: " + err.Error(),
+			Message: "手动粘贴的凭据至少要有 accessToken 与 deviceId; 本机已登录请直接点「从本机导入账号」",
+		})
+		return
+	}
+	msg := fmt.Sprintf("已添加 Trae 账号 %s", acc.UserID)
+	if n, err := traeSyncModelsSafe(); err == nil {
+		msg += fmt.Sprintf("，已同步 %d 个模型", n)
+	} else {
+		msg += "（模型同步失败: " + err.Error() + "）"
+	}
+	writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: msg})
+}
+
+// POST /admin/api/providers/trae/accounts/delete  body: {id}
+func handleTraeAccountDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeAPI(w, http.StatusMethodNotAllowed, apiResponse{Error: "method not allowed"})
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	readJSONBody(r, &req)
+	if !traeDeleteAccount(req.ID) {
+		writeAPI(w, http.StatusNotFound, apiResponse{Error: "账号不存在"})
+		return
+	}
+	writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: "已删除账号"})
+}
+
 // POST /admin/api/providers/{id}/models/refresh
 func handleProviderModelsRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -390,6 +486,13 @@ func handleProviderModelsRefresh(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: fmt.Sprintf("已同步 %d 个模型", n)})
+	case "trae":
+		n, err := traeSyncModelsSafe()
+		if err != nil {
+			writeAPI(w, http.StatusBadGateway, apiResponse{Error: err.Error()})
+			return
+		}
+		writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: fmt.Sprintf("已同步 %d 个模型", n)})
 	default:
 		writeAPI(w, http.StatusNotFound, apiResponse{Error: "unknown provider"})
 	}
@@ -421,6 +524,7 @@ func handleProviderModels(w http.ResponseWriter, r *http.Request) {
 			return out
 		}(),
 		"qoder": qoderModelList(),
+		"trae":  traeModelList(),
 	}})
 }
 
@@ -434,6 +538,7 @@ func handleProviderCredits(w http.ResponseWriter, r *http.Request) {
 		"workbuddy":    wbCreditsPayload(wbVariantCN),
 		"workbuddy-ai": wbCreditsPayload(wbVariantINTL),
 		"qoder":        qoderCreditsPayload(),
+		"trae":         traeCreditsPayload(),
 	}})
 }
 
@@ -455,6 +560,8 @@ func handleProviderCheckin(w http.ResponseWriter, r *http.Request) {
 		res, err = wbRunCheckinForAdmin(wbVariantINTL)
 	case "qoder":
 		res, err = qoderRunCheckinForAdmin()
+	case "trae":
+		res, err = traeRunCheckinForAdmin()
 	default:
 		writeAPI(w, http.StatusNotFound, apiResponse{Error: "unknown provider"})
 		return
@@ -503,6 +610,12 @@ func registerProviderRoutes(adminMux *http.ServeMux) {
 	adminMux.HandleFunc("/admin/api/providers/workbuddy/config", corsHandler(handleProviderConfigUpdate))
 	adminMux.HandleFunc("/admin/api/providers/workbuddy-ai/config", corsHandler(handleProviderConfigUpdate))
 	adminMux.HandleFunc("/admin/api/providers/qoder/config", corsHandler(handleProviderConfigUpdate))
+	adminMux.HandleFunc("/admin/api/providers/trae/config", corsHandler(handleProviderConfigUpdate))
+	adminMux.HandleFunc("/admin/api/providers/trae/import", corsHandler(handleTraeImport))
+	adminMux.HandleFunc("/admin/api/providers/trae/accounts/add", corsHandler(handleTraeAccountAdd))
+	adminMux.HandleFunc("/admin/api/providers/trae/accounts/delete", corsHandler(handleTraeAccountDelete))
+	adminMux.HandleFunc("/admin/api/providers/trae/models/refresh", corsHandler(handleProviderModelsRefresh))
+	adminMux.HandleFunc("/admin/api/providers/trae/checkin", corsHandler(handleProviderCheckin))
 	adminMux.HandleFunc("/admin/api/providers/workbuddy/import", corsHandler(handleProviderImport))
 	adminMux.HandleFunc("/admin/api/providers/workbuddy/refresh", corsHandler(handleProviderRefresh))
 	adminMux.HandleFunc("/admin/api/providers/workbuddy/models/refresh", corsHandler(handleProviderModelsRefresh))
@@ -546,4 +659,5 @@ func startProviderBoot() {
 			}
 		}
 	}()
+	traeBoot()
 }

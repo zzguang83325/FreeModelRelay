@@ -4,6 +4,11 @@
 
 一个 Go 单文件二进制，本地运行，不需要 Docker、Node、数据库。启动后按请求里的 `model` 字段自动路由到对应上游，客户端只需要一个 Base URL 和一个 Key。
 
+![FreeModelRelay 架构总览](docs/architecture.svg)
+
+<details>
+<summary>纯文本版本（终端 / 纯文本环境可读）</summary>
+
 ```
 客户端
   Claude Code · Codex CLI · Cursor · VSCode 插件 · Cherry Studio · SDK · curl
@@ -22,6 +27,8 @@
         ├──► WorkBuddy AI    国际版，同上
         └──► Qoder           阿里，个人访问令牌接入
 ```
+
+</details>
 
 ---
 

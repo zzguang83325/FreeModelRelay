@@ -232,6 +232,7 @@ body:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
 <div class="nav-item" data-tab="workbuddy"><span class="nav-ico">🐧</span> WorkBuddy账号管理</div>
 <div class="nav-item" data-tab="workbuddy-ai"><span class="nav-ico">🐧</span> WorkBuddy国际版</div>
 <div class="nav-item" data-tab="qoder"><span class="nav-ico">🔷</span> Qoder账号管理</div>
+<div class="nav-item" data-tab="trae"><span class="nav-ico">🟣</span> Trae账号管理</div>
 <div class="nav-item" data-tab="chat"><span class="nav-ico">💬</span> 模型聊天</div>
 <div class="sidebar-footer">
   <div>管理面板: <a href="/admin/">/admin/</a></div>
@@ -252,7 +253,7 @@ body:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
       <button class="btn btn-primary" id="chatSendBtn" onclick="sendChat()">发送</button>
       <button class="btn" onclick="clearChat()">清空</button>
     </div>
-    <div class="hint" style="margin-top:6px">多轮上下文仅保存在本页；流式输出经 /v1/chat/completions 真实通道（[cline]=账号池模型，[zen]=opencode 免费模型，[workbuddy]=WorkBuddy 中国区，[workbuddy-ai]=WorkBuddy 国际版，[qoder]=Qoder；第三方来源只列已接入的模型）。</div>
+    <div class="hint" style="margin-top:6px">多轮上下文仅保存在本页；流式输出经 /v1/chat/completions 真实通道（[cline]=账号池模型，[zen]=opencode 免费模型，[workbuddy]=WorkBuddy 中国区，[workbuddy-ai]=WorkBuddy 国际版，[qoder]=Qoder，[trae]=Trae；第三方来源只列已接入的模型）。</div>
   </div>
 </div>
 </div>
@@ -276,6 +277,7 @@ body:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
         <option value="workbuddy">workbuddy</option>
         <option value="workbuddy-ai">workbuddy-ai</option>
         <option value="qoder">qoder</option>
+        <option value="trae">trae</option>
       </select>
       <label class="hint mcheck"><input type="checkbox" id="mFilterFree" onchange="renderModelTable()">仅看免费</label>
       <label class="hint mcheck"><input type="checkbox" id="mFilterImage" onchange="renderModelTable()">仅看支持图片</label>
@@ -803,6 +805,72 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
 </div>
 </div>
 
+<!-- ============ Trae ============ -->
+<div id="tab-trae" class="tab-panel" style="display:none">
+<h2>🟣 Trae 账号管理（CN 区）</h2>
+
+<div class="section">
+  <div class="section-title">💎 积分与签到
+    <button class="btn btn-sm" onclick="loadCredits()" style="margin-left:auto">🔄 刷新</button>
+  </div>
+  <div class="section-body" style="padding:6px"><div id="trCreditsBox" style="padding:12px">加载中...</div></div>
+</div>
+
+<div class="section">
+  <div class="section-title">🔍 上游信息</div>
+  <div class="section-body"><div class="table-wrap"><div id="trInfo"></div></div></div>
+</div>
+
+<div class="section">
+  <div class="section-title">🔑 添加账号
+    <button class="btn btn-primary" onclick="importTrae()" style="margin-left:auto">📥 从本机导入账号</button>
+  </div>
+  <div class="section-body">
+    <div class="hint" style="margin:0 0 12px">Trae 桌面端把登录态写在
+      <code>%APPDATA%\&lt;Trae CN|TRAE SOLO CN&gt;\User\globalStorage\storage.json</code>，
+      加密用的是客户端里写死的静态盐值，<strong>不含机器指纹</strong>，所以点上方按钮就能直接解开导入，
+      和 WorkBuddy 一样，不用去 F12 里抄 token。导入会连同<strong>设备密钥对</strong>一起取回 ——
+      新版刷新接口要拿它签 DeviceProof，缺了就只能在令牌过期后重新导入。<br>
+      要从别的机器搬账号，才需要手动粘贴下方 JSON（至少 <code>accessToken</code> 与 <code>deviceId</code>）。
+      凭据保存在本机 <code>data/.trae-accounts.json</code>。</div>
+    <div class="form-row">
+      <div class="field"><label>凭据 JSON（手动兜底）</label>
+        <textarea id="trCredJson" rows="7" placeholder='{"accessToken":"eyJ...","refreshToken":"...","deviceId":"...","userId":"...","appVersion":"1.0.0"}' style="font-family:monospace;font-size:12px"></textarea>
+      </div>
+    </div>
+    <div class="form-actions"><button class="btn btn-primary" onclick="addTraeAccount()">＋ 添加并同步模型</button></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">🔄 上游配置</div>
+  <div class="section-body">
+    <div class="form-row">
+      <div class="field"><label>启用 Trae 上游</label>
+        <select id="trEnabled"><option value="true">开启</option><option value="false">关闭</option></select>
+      </div>
+      <div class="field"><label>仅列出免费模型 (credit_multiplier = 0)</label>
+        <select id="trFreeOnly"><option value="true">是</option><option value="false">否（全部模型）</option></select>
+      </div>
+      <div class="field"><label>失败重试次数</label><input type="text" id="trMaxRetries" placeholder="2"></div>
+    </div>
+    <div class="form-actions"><button class="btn btn-primary" onclick="saveTraeConfig()">💾 保存配置</button></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">👤 账号列表</div>
+  <div class="section-body" style="padding:6px"><div id="trAccountsList" style="padding:12px">加载中...</div></div>
+</div>
+
+<div class="section">
+  <div class="section-title">🧠 模型列表
+    <button class="btn btn-sm" onclick="refreshTraeModels()" style="margin-left:auto">🔄 手动同步</button>
+  </div>
+  <div class="section-body" style="padding:6px"><div id="trModelsList" style="padding:12px">加载中...</div></div>
+</div>
+</div>
+
 </div>
 </div>
 
@@ -883,6 +951,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
     if (el.dataset.tab === 'workbuddy') { loadProviders(); loadWBConfig('workbuddy'); loadCredits(); }
     if (el.dataset.tab === 'workbuddy-ai') { loadProviders(); loadWBConfig('workbuddy-ai'); loadCredits(); }
     if (el.dataset.tab === 'qoder') { loadProviders(); loadQoderConfig(); loadCredits(); }
+    if (el.dataset.tab === 'trae') { loadProviders(); loadTraeConfig(); loadCredits(); }
     if (el.dataset.tab === 'chat') loadChatModels();
     if (el.dataset.tab === 'models') loadAllModels();
   });
@@ -902,6 +971,7 @@ function switchTab(name) {
   if (name === 'workbuddy') { loadProviders(); loadWBConfig('workbuddy'); loadCredits(); }
   if (name === 'workbuddy-ai') { loadProviders(); loadWBConfig('workbuddy-ai'); loadCredits(); }
   if (name === 'qoder') { loadProviders(); loadQoderConfig(); loadCredits(); }
+  if (name === 'trae') { loadProviders(); loadTraeConfig(); loadCredits(); }
   if (name === 'chat') loadChatModels();
   if (name === 'models') loadAllModels();
 }
@@ -1189,7 +1259,7 @@ function copyText(t) {
 // ========== 请求日志 ==========
 const ROUTE_LABEL = {
   zen: 'opencode', cline: 'cline 池', admin: '管理', meta: '元信息', other: '其他',
-  workbuddy: 'WorkBuddy', 'workbuddy-ai': 'WorkBuddy 国际版', qoder: 'Qoder'
+  workbuddy: 'WorkBuddy', 'workbuddy-ai': 'WorkBuddy 国际版', qoder: 'Qoder', trae: 'Trae'
 };
 const STATUS_CLASS = s => s >= 500 ? 'color:var(--danger)' : (s >= 400 ? 'color:var(--amber)' : 'color:var(--accent2)');
 
@@ -1553,7 +1623,7 @@ async function loadOcStats() {
   } catch (e) { /* ignore */ }
 }
 
-// ========== 第三方 provider（WorkBuddy / WorkBuddy 国际版 / Qoder） ==========
+// ========== 第三方 provider（WorkBuddy / WorkBuddy 国际版 / Qoder / Trae） ==========
 let providerStatus = null;
 
 async function loadProviders() {
@@ -1563,6 +1633,7 @@ async function loadProviders() {
     renderWB('workbuddy', 'wb');
     renderWB('workbuddy-ai', 'wba');
     renderQoder();
+    renderTrae();
   } catch (e) { toast('加载 provider 状态失败: ' + e.message, 'error'); }
 }
 
@@ -1705,9 +1776,10 @@ async function loadCredits() {
     renderCredits('workbuddy', 'wb');
     renderCredits('workbuddy-ai', 'wba');
     renderCredits('qoder', 'qd');
+    renderCredits('trae', 'tr');
     renderDashCredits();
   } catch (e) {
-    ['wbCreditsBox', 'wbaCreditsBox', 'qdCreditsBox'].forEach(id => {
+    ['wbCreditsBox', 'wbaCreditsBox', 'qdCreditsBox', 'trCreditsBox'].forEach(id => {
       const el = _(id);
       if (el) el.innerHTML = '<div class="empty">加载积分失败: ' + esc(e.message) + '</div>';
     });
@@ -1719,7 +1791,8 @@ async function loadCredits() {
 const CREDIT_SOURCES = [
   { key: 'workbuddy', label: 'WorkBuddy（中国区）', prefix: 'wb' },
   { key: 'workbuddy-ai', label: 'WorkBuddy 国际版', prefix: 'wba' },
-  { key: 'qoder', label: 'Qoder', prefix: 'qd' }
+  { key: 'qoder', label: 'Qoder', prefix: 'qd' },
+  { key: 'trae', label: 'Trae', prefix: 'tr' }
 ];
 
 // 仪表盘上的紧凑视图：一行一个来源，余额 + 签到状态 + 就地签到按钮。
@@ -1821,6 +1894,27 @@ function renderCredits(key, px) {
   if (key === 'qoder' && p.quotaExceeded) {
     html += '<div style="font-size:12px;color:var(--danger);margin-bottom:10px">⚠ 配额已用尽，调用会返回 insufficient_quota</div>';
   }
+  // Trae 的用量接口还没做过真实联调, 响应字段形态未知: 先挑几个常见键显示,
+  // 挑不出来就把上游原始 JSON 原样摊开 —— 不编造字段名, 也不假装没有数据。
+  if (key === 'trae' && p.usage) {
+    const u = p.usage;
+    const pick = (v) => (v === undefined || v === null) ? null : v;
+    const known = [
+      ['剩余积分', pick(u.remain) ?? pick(u.remaining) ?? pick(u.credit) ?? pick(u.credits)],
+      ['总额度', pick(u.total) ?? pick(u.quota)],
+      ['已用', pick(u.used) ?? pick(u.usage)]
+    ].filter(x => x[1] !== null);
+    if (known.length) {
+      html += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px">' +
+        known.map(x => '<span style="font-size:12px;color:var(--text2)">' + x[0] + ' <strong style="color:var(--accent)">' + esc(String(x[1])) + '</strong></span>').join('') +
+        '</div>';
+    }
+    html += '<details style="margin-bottom:10px"><summary style="font-size:11px;color:var(--text3);cursor:pointer">上游原始用量数据（字段形态待实调确认）</summary>' +
+      '<pre class="mono" style="font-size:11px;color:var(--text3);white-space:pre-wrap;margin:6px 0 0">' + esc(JSON.stringify(u, null, 2)) + '</pre></details>';
+  }
+  if (key === 'trae' && st && st.deviceUsed) {
+    html += '<div style="font-size:12px;color:var(--amber);margin-bottom:10px">该设备标识已领取过（Trae 签到按 deviceId 幂等）</div>';
+  }
 
   html += '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border)">';
   if (st) {
@@ -1847,7 +1941,7 @@ function renderCredits(key, px) {
 }
 
 async function doCheckin(key) {
-  const label = { 'workbuddy': 'WorkBuddy', 'workbuddy-ai': 'WorkBuddy 国际版', 'qoder': 'Qoder' }[key] || key;
+  const label = { 'workbuddy': 'WorkBuddy', 'workbuddy-ai': 'WorkBuddy 国际版', 'qoder': 'Qoder', 'trae': 'Trae' }[key] || key;
   try {
     const d = await api('POST', '/providers/' + key + '/checkin', {});
     toast(label + '：' + (d.message || '签到完成'), d.success ? 'success' : 'info', 5000);
@@ -1965,6 +2059,132 @@ async function delQoderAccount(id) {
 async function refreshQoderModels() {
   try {
     const d = await api('POST', '/providers/qoder/models/refresh', {});
+    toast(d.message || '同步完成', 'success', 6000);
+    loadProviders();
+  } catch (e) { toast('同步失败: ' + e.message, 'error', 9000); }
+}
+
+// ========== Trae ==========
+const TRAE_SOURCE_TEXT = { desktop: '本机客户端', cli: '本机 CLI', manual: '手动粘贴' };
+const TRAE_EDITION_TEXT = { cn: 'Trae CN', sg: 'Trae 国际', solo: 'TRAE SOLO CN', 'solo-sg': 'TRAE SOLO' };
+
+function renderTrae() {
+  const p = providerStatus ? providerStatus.trae : null;
+  if (!p) return;
+  const rows = [
+    ['区域', 'cn（www.trae.cn）'],
+    ['账号数', String((p.accounts || []).length)],
+    ['模型数', String(p.modelCount || 0) + (p.freeOnly ? '（仅免费）' : '（全部）')]
+  ];
+  const box = _('trInfo');
+  if (box) box.innerHTML = '<table><tbody>' + rows.map(r => '<tr><td style="text-align:left;color:var(--text2);width:170px">' + r[0] + '</td><td style="text-align:left">' + r[1] + '</td></tr>').join('') + '</tbody></table>';
+
+  const accBox = _('trAccountsList');
+  const accs = p.accounts || [];
+  if (accBox) {
+    if (!accs.length) {
+      accBox.innerHTML = '<div class="empty">暂无账号。请确认本机已登录 Trae 桌面端，然后点上方「📥 从本机导入账号」。</div>';
+    } else {
+      accBox.innerHTML = '<div class="table-wrap"><table><thead><tr>' +
+        '<th style="text-align:left">账号</th><th style="text-align:left">版本</th><th style="text-align:left">来源</th>' +
+        '<th style="text-align:left">userId</th><th style="text-align:left">deviceId</th>' +
+        '<th>令牌状态</th><th>有效期至</th><th>可续期</th><th style="text-align:left">备注</th><th></th>' +
+        '</tr></thead><tbody>' +
+        accs.map(a => '<tr>' +
+          '<td style="text-align:left;font-size:12px">' + esc(a.userName || a.id) + '</td>' +
+          '<td style="text-align:left;font-size:11px">' + esc(TRAE_EDITION_TEXT[a.edition] || a.edition || '-') + '</td>' +
+          '<td style="text-align:left;font-size:11px">' + esc(TRAE_SOURCE_TEXT[a.source] || a.source || '-') + '</td>' +
+          '<td style="text-align:left;font-family:monospace;font-size:11px">' + esc(a.userId || '-') + '</td>' +
+          '<td style="text-align:left;font-family:monospace;font-size:11px">' + esc(a.deviceId || '-') + '</td>' +
+          '<td>' + (a.hasToken ? (a.expired ? '<span class="status expired"><span class="status-dot expired"></span>已过期</span>' : '<span class="status active"><span class="status-dot active"></span>有效</span>') : '<span class="status cooldown"><span class="status-dot cooldown"></span>无令牌</span>') + '</td>' +
+          '<td class="mono" style="font-size:11px">' + esc(a.expiresAtText || '-') + '</td>' +
+          // 没有 refreshToken 就只能等令牌过期后重新导入; 有 refresh 但缺设备密钥
+          // 对时仍能走旧接口兜底, 所以两者分开提示。
+          '<td>' + (a.renewable
+            ? (a.hasDeviceKey ? '<span class="status active"><span class="status-dot active"></span>可续期</span>'
+                              : '<span class="status cooldown"><span class="status-dot cooldown"></span>降级续期</span>')
+            : '<span class="status expired"><span class="status-dot expired"></span>不可续期</span>') + '</td>' +
+          '<td style="text-align:left;font-size:11px;color:var(--text3)">' + esc(a.lastError || '') + '</td>' +
+          '<td><button class="btn btn-sm btn-danger" onclick="delTraeAccount(\'' + a.id + '\')" title="删除">✕</button></td>' +
+        '</tr>').join('') + '</tbody></table></div>' +
+        '<div class="hint">「可续期」= 有 refreshToken 且未过期（新接口需设备密钥对签名）；' +
+        '「降级续期」= 缺设备密钥对，只能走旧接口；「不可续期」= 过期后需重新导入。</div>';
+    }
+  }
+
+  const mBox = _('trModelsList');
+  const models = p.models || [];
+  if (mBox) {
+    if (!models.length) {
+      mBox.innerHTML = '<div class="empty">暂无模型，点右上角「🔄 手动同步」拉取（需先添加账号）。</div>';
+    } else {
+      mBox.innerHTML = '<div class="table-wrap"><table><thead><tr><th style="text-align:left">模型 ID</th><th style="text-align:left">显示名</th><th>倍率</th><th>上下文</th><th>推理</th></tr></thead><tbody>' +
+        models.map(m => '<tr><td style="text-align:left;font-family:monospace">' + esc(m.id) + '</td><td style="text-align:left">' + esc(m.name || '') + '</td><td>' + (m.price ?? 0) + '</td><td>' + (m.context || 0) + '</td><td>' + (m.reason ? '✓' : '') + '</td></tr>').join('') +
+        '</tbody></table></div><div class="hint">共 ' + models.length + ' 个模型 · 倍率 0 表示免费 · 调用时可用 <code>trae/&lt;模型ID&gt;</code> 或 <code>tr/&lt;模型ID&gt;</code> 强制路由</div>';
+    }
+  }
+}
+
+async function loadTraeConfig() {
+  try {
+    const p = providerStatus ? providerStatus.trae : (await api('GET', '/providers/status')).data.trae;
+    _('trEnabled').value = String(!!p.enabled);
+    _('trFreeOnly').value = String(!!p.freeOnly);
+    _('trMaxRetries').value = p.maxRetries == null ? 2 : p.maxRetries;
+  } catch (e) { /* ignore */ }
+}
+
+async function saveTraeConfig() {
+  try {
+    await api('POST', '/providers/trae/config', {
+      enabled: _('trEnabled').value === 'true',
+      freeOnly: _('trFreeOnly').value === 'true',
+      maxRetries: parseInt(_('trMaxRetries').value) || 0
+    });
+    toast('配置已保存', 'success');
+    loadProviders();
+  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
+}
+
+async function importTrae() {
+  try {
+    const d = await api('POST', '/providers/trae/import', {});
+    toast(d.message || '导入完成', 'success', 8000);
+    loadProviders();
+  } catch (e) { toast('导入失败: ' + e.message, 'error', 9000); }
+}
+
+async function addTraeAccount() {
+  const raw = _('trCredJson').value.trim();
+  if (!raw) { toast('请先粘贴 Trae 凭据 JSON', 'error'); return; }
+  let cred;
+  try {
+    cred = JSON.parse(raw);
+  } catch (e) {
+    toast('JSON 解析失败: ' + e.message, 'error', 9000);
+    return;
+  }
+  if (!cred.accessToken) { toast('凭据缺少 accessToken 字段', 'error'); return; }
+  try {
+    const d = await api('POST', '/providers/trae/accounts/add', cred);
+    _('trCredJson').value = '';
+    toast(d.message || '添加成功', 'success', 6000);
+    loadProviders();
+  } catch (e) { toast('添加失败: ' + e.message, 'error', 9000); }
+}
+
+async function delTraeAccount(id) {
+  if (!confirm('确定删除该 Trae 账号？')) return;
+  try {
+    await api('POST', '/providers/trae/accounts/delete', { id: id });
+    toast('已删除', 'success');
+    loadProviders();
+  } catch (e) { toast('删除失败: ' + e.message, 'error'); }
+}
+
+async function refreshTraeModels() {
+  try {
+    const d = await api('POST', '/providers/trae/models/refresh', {});
     toast(d.message || '同步完成', 'success', 6000);
     loadProviders();
   } catch (e) { toast('同步失败: ' + e.message, 'error', 9000); }
@@ -2088,7 +2308,7 @@ async function fetchProviderModels() {
   const out = [];
   // priced 表示"上游目录给了价": WorkBuddy 看 credits 字段(x0.29 credits),
   // Qoder 看 priceFactor。两者都可能缺 —— 缺了就是未标价, 不能当成免费。
-  const srcs = [['workbuddy', 'workbuddy'], ['workbuddy-ai', 'workbuddy-ai'], ['qoder', 'qoder']];
+  const srcs = [['workbuddy', 'workbuddy'], ['workbuddy-ai', 'workbuddy-ai'], ['qoder', 'qoder'], ['trae', 'trae']];
   try {
     const d = await api('GET', '/providers/models');
     const data = d.data || {};
@@ -2098,7 +2318,12 @@ async function fetchProviderModels() {
         // 上游是否给了价: WorkBuddy 看 credits 字段(x0.29 credits), Qoder 看
         // priceFactor(两者都总有该键, qfmodel 的 0 是真免费)。缺失即"未标价",
         // 不能当成免费 —— 见 providerDecorateID 的注释。
-        const priced = isQd ? (m.priceFactor !== undefined && m.priceFactor !== null) : !!m.credits;
+        // Trae 单独用 priced 标记: 它的倍率键 credit_multiplier 可能整个缺失,
+        // 缺省值也是 0, 光看数值分不清"免费"和"上游没给", 必须看键在不在。
+        let priced;
+        if (pair[0] === 'trae') priced = !!m.priced;
+        else if (isQd) priced = (m.priceFactor !== undefined && m.priceFactor !== null);
+        else priced = !!m.credits;
         out.push({
           id: m.id,
           baseId: m.baseId || m.id,
@@ -2127,11 +2352,11 @@ async function fetchProviderModels() {
 
 // ========== 模型列表页(表格 + 筛选 + 模态探测) ==========
 // src 是内部路由键, group 是对外 /v1/models 的 owned_by。
-const MODEL_GROUP = { cline: 'cline-free', zen: 'opencode-zen', workbuddy: 'workbuddy', 'workbuddy-ai': 'workbuddy-ai', qoder: 'qoder' };
+const MODEL_GROUP = { cline: 'cline-free', zen: 'opencode-zen', workbuddy: 'workbuddy', 'workbuddy-ai': 'workbuddy-ai', qoder: 'qoder', trae: 'trae' };
 // 第三方 provider 的 src 值, 用于检测"某个来源一条模型都没拿到"(同步延迟/失败)
-const PROVIDER_GROUPS = ['workbuddy', 'workbuddy-ai', 'qoder'];
+const PROVIDER_GROUPS = ['workbuddy', 'workbuddy-ai', 'qoder', 'trae'];
 // 计数条固定按这个顺序展示(含 0), 某个来源掉线时能一眼看出来
-const MODEL_GROUP_ORDER = ['cline-free', 'opencode-zen', 'workbuddy', 'workbuddy-ai', 'qoder'];
+const MODEL_GROUP_ORDER = ['cline-free', 'opencode-zen', 'workbuddy', 'workbuddy-ai', 'qoder', 'trae'];
 let MODEL_ITEMS = [];
 let MODEL_DEF = '';
 let MODEL_SORT = { key: 'group', dir: 1 };

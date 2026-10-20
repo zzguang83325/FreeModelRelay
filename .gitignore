@@ -44,7 +44,7 @@
 *.exe~
 /FreeModelRelay
 /FreeModelRelay-*
-
+*.lnk
 # 上面几条：Windows 覆盖运行中的 exe 会留下 .exe~ 备份；
 # FreeModelRelay 是 Linux/macOS 产物；
 # FreeModelRelay-* 是交叉编译产物（FreeModelRelay-windows-amd64 等）。

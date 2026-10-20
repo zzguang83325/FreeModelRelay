@@ -431,6 +431,78 @@ func zenRealToolDefs() []map[string]any {
 	return zenRealTools
 }
 
+// zenInjectedToolNames 是 applyFreeTierFingerprint 会注入的官方工具名(小写)。
+//
+// 客户端若声明了同名但大小写不同的版本(Claude Code 声明的是 Bash / Read),
+// 注入逻辑按精确名去重会当成两个不同工具, 两份都进请求。模型可能选中注入的
+// 那份, 回给客户端一个它不认识的名字(Bash ≠ bash), 工具调用直接失败。
+var zenInjectedToolNames = map[string]bool{"bash": true, "read": true}
+
+// applyZenToolAliases 把客户端工具名归一成官方小写名, 历史 tool_calls 同步改。
+//
+// 归一之后注入逻辑按同名命中自动跳过, 请求里只剩客户端自己那份 schema ——
+// 参数也就保持客户端定义的形状(官方 bash 的 workdir 在 Claude Code 里不存在,
+// 若走"注入官方定义再改名回去"的路子, 模型按官方 schema 生成的 workdir 会被
+// 参数裁剪丢掉, 命令静默跑在错误目录)。响应侧由 resolveClientToolName 还原。
+//
+// 只动与官方注入名冲突的工具, Edit / Grep / Task 等一律不碰。
+func applyZenToolAliases(body map[string]any) map[string]string {
+	aliases := map[string]string{}
+	rename := func(name string) string {
+		if name == "" || zenInjectedToolNames[name] {
+			return name
+		}
+		lower := strings.ToLower(name)
+		if !zenInjectedToolNames[lower] {
+			return name
+		}
+		aliases[lower] = name
+		return lower
+	}
+
+	if tools, ok := body["tools"].([]any); ok {
+		for _, t := range tools {
+			tm, _ := t.(map[string]any)
+			if tm == nil {
+				continue
+			}
+			fn, _ := tm["function"].(map[string]any)
+			if fn == nil {
+				continue
+			}
+			if n, ok := fn["name"].(string); ok {
+				fn["name"] = rename(n)
+			}
+		}
+	}
+
+	// 多轮历史里 assistant 的 tool_calls 名字必须与 tools 定义一致,
+	// 否则部分上游会按"调用了未声明的工具"报 400。
+	if msgs, ok := body["messages"].([]any); ok {
+		for _, m := range msgs {
+			mm, _ := m.(map[string]any)
+			if mm == nil {
+				continue
+			}
+			tcs, _ := mm["tool_calls"].([]any)
+			for _, tc := range tcs {
+				tcm, _ := tc.(map[string]any)
+				if tcm == nil {
+					continue
+				}
+				fn, _ := tcm["function"].(map[string]any)
+				if fn == nil {
+					continue
+				}
+				if n, ok := fn["name"].(string); ok {
+					fn["name"] = rename(n)
+				}
+			}
+		}
+	}
+	return aliases
+}
+
 // applyFreeTierFingerprint 补齐请求体指纹: 强制 stream:true, 按缺失名注入官方
 // 工具定义, 匿名 key 下按官方 SDK 惯例附带用量统计。客户端已声明的同名工具
 // 保留不动(同名同类定义实测可过, 且避免重名工具调用歧义)。
@@ -534,6 +606,16 @@ func buildZenBody(params map[string]any, stream bool) map[string]any {
 		if val, ok := params[key]; ok {
 			body[key] = val
 		}
+	}
+	// 角色归一(developer → system / 多条 system 合并): 上游只认
+	// system/assistant/user/tool/function 且要求 system 在开头。
+	if msgs, ok := body["messages"].([]any); ok {
+		body["messages"] = cleanMessages(msgs)
+	}
+	// 工具名归一(Bash → bash): 必须早于 applyFreeTierFingerprint, 否则注入
+	// 逻辑按精确名去重, 会给客户端多塞一份同义工具, 模型可能选中注入的那份。
+	if aliases := applyZenToolAliases(body); len(aliases) > 0 {
+		log.Printf("  zen tool alias: %d 个工具名归一为官方小写", len(aliases))
 	}
 	if stream {
 		body["stream"] = true
