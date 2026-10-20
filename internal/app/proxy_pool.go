@@ -59,14 +59,14 @@ func zenProxyAvailable(idx int) bool {
 }
 
 func zenProxyCooldownStatus() map[string]string {
-	cfg := getZenConfig()
+	proxies := effectiveZenProxies()
 	zenProxyCooldownsMu.Lock()
 	defer zenProxyCooldownsMu.Unlock()
 	out := map[string]string{}
 	for idx, until := range zenProxyCooldowns {
-		if idx >= 0 && idx < len(cfg.Proxies) {
+		if idx >= 0 && idx < len(proxies) {
 			if time.Now().Before(until) {
-				out[cfg.Proxies[idx]] = until.Format("15:04:05")
+				out[proxies[idx]] = until.Format("15:04:05")
 			}
 		}
 	}
@@ -86,17 +86,31 @@ func getZenHTTPClient() *http.Client {
 	return zenHTTPClient
 }
 
+// effectiveZenProxies zen 通道实际可用的出口列表: 手动代理 + 机场订阅节点(本地 socks 端口)。
+// 订阅节点由 subscription.go 管理, 自动追加在手动列表之后; 冷却索引基于此合并列表。
+func effectiveZenProxies() []string {
+	cfg := getZenConfig()
+	subs := subscriptionProxyURLs()
+	if len(subs) == 0 {
+		return cfg.Proxies
+	}
+	out := make([]string, 0, len(cfg.Proxies)+len(subs))
+	out = append(out, cfg.Proxies...)
+	return append(out, subs...)
+}
+
 // pickZenProxy 按策略选择代理,返回 (代理URL, 索引);无代理返回 ("", -1)。
 // 跳过冷却中的代理;全部冷却时返回最早恢复的近似(轮询位)。
 // 每次调用递增计数,保证 round_robin 顺序与日志索引一致。
+// 代理来源: 手动列表(网络设置页) + 机场订阅节点(自动注入)。
 func pickZenProxy() (string, int) {
-	cfg := getZenConfig()
-	n := len(cfg.Proxies)
+	proxies := effectiveZenProxies()
+	n := len(proxies)
 	if n == 0 {
 		return "", -1
 	}
 	idx := int(zenProxyCount.Add(1)-1) % n
-	switch cfg.ProxyStrategy {
+	switch getZenConfig().ProxyStrategy {
 	case "random":
 		idx = int(kit.RandIntn(n))
 	case "fill":
@@ -109,7 +123,7 @@ func pickZenProxy() (string, int) {
 		}
 		idx = (idx + 1) % n
 	}
-	return cfg.Proxies[idx], idx
+	return proxies[idx], idx
 }
 
 // zenProxyPick 记录某次请求实际拨号使用的代理, 通过请求上下文传给 callZenAPI。
@@ -128,7 +142,7 @@ func lastZenProxyIdx() int {
 	if v <= 0 {
 		return -1
 	}
-	return int((v - 1) % int64(max(1, len(getZenConfig().Proxies))))
+	return int((v - 1) % int64(max(1, len(effectiveZenProxies()))))
 }
 
 func maskProxyURL(raw string) string {

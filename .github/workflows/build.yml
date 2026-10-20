@@ -34,10 +34,10 @@ jobs:
           cache: true
 
       - name: go vet
-        run: go vet ./...
+        run: go vet -tags "with_utls,with_quic,with_grpc" ./...
 
       - name: go test
-        run: go test ./...
+        run: go test -tags "with_utls,with_quic,with_grpc" ./...
 
   # ---------------------------------------------------------------
   # 6 平台矩阵并行编译
@@ -99,7 +99,7 @@ jobs:
           # 交叉编译必须关闭 cgo，否则会去链接目标平台的 libc
           CGO_ENABLED: "0"
         run: >
-          go build -trimpath -ldflags="-s -w"
+          go build -tags "with_utls,with_quic,with_grpc" -trimpath -ldflags="-s -w"
           -o FreeModelRelay-${{ matrix.target }}${{ matrix.ext }} .
 
       - name: Verify binary

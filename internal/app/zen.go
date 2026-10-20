@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -769,7 +770,7 @@ func callZenAPI(params map[string]any, stream bool) (*http.Response, int, error)
 			// 冷却本次请求实际拨号使用的代理; 未拨号(连接复用)时回退到计数法
 			// 代理池为空时走的是统一出口代理, 没有池内索引可冷却, 跳过
 			idx := pick.idx
-			if idx < 0 && len(getZenConfig().Proxies) > 0 {
+			if idx < 0 && len(effectiveZenProxies()) > 0 {
 				idx = lastZenProxyIdx()
 			}
 			if idx >= 0 {
@@ -807,8 +808,7 @@ func callZenAPI(params map[string]any, stream bool) (*http.Response, int, error)
 }
 
 func describeZenProxy() string {
-	cfg := getZenConfig()
-	proxies := cfg.Proxies
+	proxies := effectiveZenProxies()
 	if len(proxies) == 0 {
 		// 池为空: 走统一出口代理(手动 > 系统代理 > 环境变量 > 直连)
 		u, src := kit.ResolveEgressProxy("https", "example.com:443")
@@ -822,7 +822,14 @@ func describeZenProxy() string {
 		idx = 0
 	}
 	idx %= len(proxies)
-	return fmt.Sprintf("proxy[%d]=%s", idx+1, kit.Truncate(maskProxyURL(proxies[idx]), 60))
+	p := proxies[idx]
+	// 机场订阅节点(本地 socks 端口)单独标识
+	if strings.HasPrefix(p, "socks5://127.0.0.1:") {
+		if port, err := strconv.Atoi(strings.TrimPrefix(p, "socks5://127.0.0.1:")); err == nil && port >= subPortBase {
+			return fmt.Sprintf("proxy[%d]=订阅节点:%d", idx+1, port)
+		}
+	}
+	return fmt.Sprintf("proxy[%d]=%s", idx+1, kit.Truncate(maskProxyURL(p), 60))
 }
 
 func zenModelList() []map[string]any {

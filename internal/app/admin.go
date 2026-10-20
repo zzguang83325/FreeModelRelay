@@ -115,6 +115,10 @@ func registerAdminRoutes(mux *http.ServeMux) {
 	// 统一出口代理(手动 > 系统代理 > 环境变量 > 直连)
 	adminMux.HandleFunc("/admin/api/egress-proxy", corsHandler(handleEgressProxyConfig))
 	adminMux.HandleFunc("/admin/api/egress-proxy/update", corsHandler(handleEgressProxyConfigUpdate))
+	// 机场订阅(节点自动注入 zen 代理池)
+	adminMux.HandleFunc("/admin/api/subscriptions", corsHandler(handleSubscriptions))
+	adminMux.HandleFunc("/admin/api/subscriptions/update", corsHandler(handleSubscriptionsUpdate))
+	adminMux.HandleFunc("/admin/api/subscriptions/refresh", corsHandler(handleSubscriptionsRefresh))
 	adminMux.HandleFunc("/admin/zen/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusFound)
 	})

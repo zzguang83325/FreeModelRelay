@@ -10,6 +10,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ldflags = "-s -w"
+# sing-box 功能标签: with_utls(uTLS 指纹) / with_quic(hysteria2) / with_grpc(gRPC 传输)
+$gobuildtags = "with_utls,with_quic,with_grpc"
 
 # Keep in sync with the release matrix in .github/workflows/build.yml
 $targets = @(
@@ -26,14 +28,14 @@ function Invoke-Build([string]$goos, [string]$goarch, [string]$out) {
     $env:CGO_ENABLED = "0"
     if ($goos)   { $env:GOOS = $goos }     else { Remove-Item Env:GOOS -ErrorAction SilentlyContinue }
     if ($goarch) { $env:GOARCH = $goarch } else { Remove-Item Env:GOARCH -ErrorAction SilentlyContinue }
-    go build -ldflags $ldflags -o $out .
+    go build -tags $gobuildtags -ldflags $ldflags -o $out .
     if ($LASTEXITCODE -ne 0) { Write-Host "==> Build failed: $out" -ForegroundColor Red; exit 1 }
     Write-Host "==> OK: $out"
 }
 
 if ($Test) {
     Write-Host "==> Running tests"
-    go test ./...
+    go test -tags $gobuildtags ./...
     if ($LASTEXITCODE -ne 0) { Write-Host "==> Tests failed" -ForegroundColor Red; exit 1 }
 }
 
