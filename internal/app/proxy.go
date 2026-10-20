@@ -68,7 +68,8 @@ func StartProxy(host string, port int) error {
 			activeCount++
 		}
 	}
-	log.Printf("Loaded %d active accounts from pool", activeCount)
+	// cline 账号池是众多来源之一, 不在启动时特别强调(降为 debug)。
+	debugLogf("cline pool: %d accounts, %d active", len(p.Accounts), activeCount)
 
 	freePort(port)
 
@@ -320,8 +321,10 @@ func StartProxy(host string, port int) error {
 	fmt.Printf("  http://%s\n", addr)
 	fmt.Printf("  http://%s/v1\n", addr)
 	fmt.Println("  API Key: any value")
-	fmt.Printf("  Model:   %s (auto-detected)\n", getDefaultModel())
-	fmt.Printf("  Accounts: %d total, %d active\n", len(loadPool().Accounts), activeCount)
+	// 多来源聚合网关, 启动信息按来源列, 不再只显示 cline 的模型与账号。
+	for _, line := range startupBannerLines() {
+		fmt.Println(line)
+	}
 	fmt.Println(strings.Repeat("=", 58))
 
 	return server.ListenAndServe()

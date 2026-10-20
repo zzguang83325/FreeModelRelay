@@ -84,6 +84,7 @@ func registerAdminRoutes(mux *http.ServeMux) {
 	adminMux.HandleFunc("/admin/api/oauth/status", corsHandler(handleOAuthStatus))
 	adminMux.HandleFunc("/admin/api/sso/import", corsHandler(handleSSOImport))
 	adminMux.HandleFunc("/admin/api/stats", corsHandler(handleAdminStats))
+	adminMux.HandleFunc("/admin/api/model-stats", corsHandler(handleAdminModelStats))
 	adminMux.HandleFunc("/admin/api/batch-import", corsHandler(handleBatchImport))
 	adminMux.HandleFunc("/admin/api/accounts/refresh-all", corsHandler(handleAdminRefreshAll))
 	adminMux.HandleFunc("/admin/api/accounts/delete-all", corsHandler(handleAdminDeleteAll))

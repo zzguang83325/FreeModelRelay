@@ -328,7 +328,9 @@ func syncModelsOnce() {
 	if added > 0 {
 		log.Printf("  model sync: %d new free models from official feed", added)
 	} else {
-		log.Printf("  model sync: %d free models up to date", len(getFreeModels()))
+		// 每 60 秒跑一次的例行同步, 属于可预期信息, 降为 debug 级,
+		// 日常运行不刷屏(需要排查时设 FMR_DEBUG=1 打开)。
+		debugLogf("  model sync: %d free models up to date", len(getFreeModels()))
 	}
 }
 

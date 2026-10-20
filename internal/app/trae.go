@@ -1926,6 +1926,97 @@ func traeCheckinReward(body []byte) float64 {
 	return 0
 }
 
+// traeUsageSummary 上游 usage_summary: 总额/已用/消耗比。
+type traeUsageSummary struct {
+	TotalAmount      float64 `json:"total_amount"`
+	ConsumedAmount   float64 `json:"consumed_amount"`
+	ConsumptionRatio float64 `json:"consumption_ratio"`
+}
+
+// traeEntPack 上游 user_entitlement_pack_list 里的一条权益包。
+type traeEntPack struct {
+	DisplayDesc string `json:"display_desc"`
+	GroupName   string `json:"group_name"`
+	Status      int    `json:"status"`
+	Usage       struct {
+		CreditsAmount float64 `json:"credits_amount"`
+	} `json:"usage"`
+	EntitlementBaseInfo struct {
+		Quota struct {
+			CreditsLimit float64 `json:"credits_limit"`
+		} `json:"quota"`
+		ProductExtra struct {
+			PackageExtra struct {
+				Quota struct {
+					CreditsLimit float64 `json:"credits_limit"`
+				} `json:"quota"`
+			} `json:"package_extra"`
+		} `json:"product_extra"`
+	} `json:"entitlement_base_info"`
+}
+
+// traeCreditsLimitOf 取该权益包的额度上限。上游把 credits_limit 放在
+// entitlement_base_info.quota 或 product_extra.package_extra.quota 两处,
+// 且只有带额度的付费/赠送包才有 —— 免费包完全没有该字段。
+func (p traeEntPack) traeCreditsLimitOf() float64 {
+	if p.EntitlementBaseInfo.Quota.CreditsLimit > 0 {
+		return p.EntitlementBaseInfo.Quota.CreditsLimit
+	}
+	return p.EntitlementBaseInfo.ProductExtra.PackageExtra.Quota.CreditsLimit
+}
+
+// traeCreditsOf 把上游用量响应折算成与 WorkBuddy/Qoder 同形的余额块,
+// 让前端仪表盘用同一张卡片渲染三个来源。
+//
+// 上游给的是"总额 + 已用"而非"剩余", 所以 remain = total - used。
+// 总额以 usage_summary.total_amount 为准(它等于所有权益包额度之和),
+// 已用以 usage_summary.consumed_amount 为准; 两者都缺时退回权益包求和。
+func traeCreditsOf(usage map[string]any) *wbCredits {
+	var parsed struct {
+		UsageSummary traeUsageSummary `json:"usage_summary"`
+		Packs        []traeEntPack    `json:"user_entitlement_pack_list"`
+	}
+	raw, _ := json.Marshal(usage)
+	if json.Unmarshal(raw, &parsed) != nil {
+		return nil
+	}
+	out := &wbCredits{Unit: "credits"}
+	sumLimit, sumUsed := 0.0, 0.0
+	for _, p := range parsed.Packs {
+		sumLimit += p.traeCreditsLimitOf()
+		sumUsed += p.Usage.CreditsAmount
+	}
+	out.Total = parsed.UsageSummary.TotalAmount
+	out.Used = parsed.UsageSummary.ConsumedAmount
+	if out.Total <= 0 {
+		out.Total = sumLimit
+	}
+	if out.Used <= 0 {
+		out.Used = sumUsed
+	}
+	// 上游偶尔只给总额不给已用(或反之), 兜底保证百分比不越界。
+	if out.Total < out.Used {
+		out.Total = out.Used
+	}
+	out.Remain = out.Total - out.Used
+	if out.Remain < 0 {
+		out.Remain = 0
+	}
+	out.PackageCount = len(parsed.Packs)
+	// 套餐名取"带额度的那一档"(赠送/付费包), 不要取列表第一项 ——
+	// 第一项往往是额度为 0 的"免费"包, 名字没有信息量。
+	for _, p := range parsed.Packs {
+		if p.traeCreditsLimitOf() > 0 {
+			out.PlanName = p.DisplayDesc
+			break
+		}
+	}
+	if out.PlanName == "" && len(parsed.Packs) > 0 {
+		out.PlanName = parsed.Packs[0].DisplayDesc
+	}
+	return out
+}
+
 // traeFetchUsage 查询积分用量(端点形态随上游, 这里原样返回解析后的对象供后台展示)。
 func traeFetchUsage(a *traeAccount) (map[string]any, error) {
 	gw := traeRegionGateways[regionOfTrae(a)]
@@ -2010,6 +2101,11 @@ func traeCreditsPayload() map[string]any {
 		out["creditsError"] = err.Error()
 	} else {
 		out["usage"] = usage
+		// 折算成与 WB/Qoder 同形的余额块, 否则前端仪表盘取不到 p.credits,
+		// 只能落到"余额查询失败"兜底文案(接口其实 200 正常)。
+		if c := traeCreditsOf(usage); c != nil {
+			out["credits"] = c
+		}
 	}
 	if st, err := traeCheckinStatus(acc); err != nil {
 		out["checkinError"] = err.Error()

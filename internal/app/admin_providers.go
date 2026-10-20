@@ -539,6 +539,7 @@ func handleProviderCredits(w http.ResponseWriter, r *http.Request) {
 		"workbuddy-ai": wbCreditsPayload(wbVariantINTL),
 		"qoder":        qoderCreditsPayload(),
 		"trae":         traeCreditsPayload(),
+		"autoCheckin":  autoCheckinResultsSnapshot(),
 	}})
 }
 
@@ -658,6 +659,10 @@ func startProviderBoot() {
 				log.Printf("  provider: qoder %d models ready", n)
 			}
 		}
+		// 各来源目录同步基本就绪, 输出一次多来源模型概览
+		time.Sleep(2 * time.Second)
+		logModelSourceSummary()
 	}()
 	traeBoot()
+	startAutoCheckin()
 }

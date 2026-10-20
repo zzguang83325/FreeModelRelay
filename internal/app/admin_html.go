@@ -60,7 +60,7 @@ body::before{content:'';position:fixed;inset:0;z-index:-1;background:
 h2{font-size:21px;margin-bottom:18px;font-weight:700;letter-spacing:.01em}
 
 /* ===== 卡片 ===== */
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:26px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:26px}
 .card{background:var(--panel);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:var(--radius);padding:18px;position:relative;overflow:hidden;transition:.2s}
 .card::after{content:'';position:absolute;inset:0;background:radial-gradient(220px 80px at 85% -10%,rgba(34,211,238,.12),transparent);pointer-events:none}
 .card:hover{transform:translateY(-2px);border-color:var(--border-strong);box-shadow:0 10px 30px rgba(2,6,23,.35)}
@@ -76,6 +76,8 @@ h2{font-size:21px;margin-bottom:18px;font-weight:700;letter-spacing:.01em}
 .cards .card:nth-child(2){animation-delay:.08s}
 .cards .card:nth-child(3){animation-delay:.14s}
 .cards .card:nth-child(4){animation-delay:.2s}
+.cards .card:nth-child(5){animation-delay:.26s}
+.cards .card:nth-child(6){animation-delay:.32s}
 @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 
 /* ===== 区块 ===== */
@@ -290,14 +292,16 @@ body:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
 
 <div id="tab-dashboard" class="tab-panel">
 <h2>📊 仪表盘</h2>
-<div class="cards">
-  <div class="card"><div class="num blue" id="statTotal">-</div><div class="label">账号总数</div></div>
-  <div class="card"><div class="num green" id="statActive">-</div><div class="label">活跃</div></div>
-  <div class="card"><div class="num yellow" id="statCooldown">-</div><div class="label">冷却</div></div>
-  <div class="card"><div class="num red" id="statExpired">-</div><div class="label">已过期</div></div>
+<div class="section">
+  <div class="section-title">🤖 各模型来源模型数
+    <button class="btn btn-sm" onclick="loadModelStats()" style="margin-left:auto">🔄 刷新</button>
+  </div>
+  <div class="section-body">
+    <div class="cards" id="modelStatCards" style="margin-bottom:0"></div>
+  </div>
 </div>
 <div class="section">
-  <div class="section-title">💎 积分与签到（WorkBuddy / 国际版 / Qoder）
+  <div class="section-title">💎 积分与签到（WorkBuddy / 国际版 / Qoder / Trae）
     <button class="btn btn-sm" onclick="loadCredits()" style="margin-left:auto">🔄 刷新</button>
     <button class="btn btn-sm btn-primary" onclick="doCheckinAll()" style="margin-left:6px" title="对当前有签到活动的来源依次签到，已签到的会跳过">🎁 一键签到</button>
   </div>
@@ -950,7 +954,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.add('active');
     document.querySelectorAll('.tab-panel').forEach(e => e.style.display = 'none');
     _('tab-' + el.dataset.tab).style.display = 'block';
-    if (el.dataset.tab === 'dashboard') { loadStats(); loadAccounts(); loadKeys(); loadCredits(); }
+    if (el.dataset.tab === 'dashboard') { loadStats(); loadModelStats(); loadAccounts(); loadKeys(); loadCredits(); }
     if (el.dataset.tab === 'cline') { loadAccounts(); loadModels(); loadConfig(); }
     if (el.dataset.tab === 'logs') loadLogs();
     if (el.dataset.tab === 'opencode') { loadOcConfig(); loadOcModels(); loadOcStats(); }
@@ -969,7 +973,7 @@ function switchTab(name) {
   });
   document.querySelectorAll('.tab-panel').forEach(e => e.style.display = 'none');
   _('tab-' + name).style.display = 'block';
-  if (name === 'dashboard') { loadStats(); loadAccounts(); loadKeys(); loadCredits(); }
+  if (name === 'dashboard') { loadStats(); loadModelStats(); loadAccounts(); loadKeys(); loadCredits(); }
   if (name === 'cline') { loadAccounts(); loadModels(); loadConfig(); }
   if (name === 'logs') loadLogs();
   if (name === 'opencode') { loadOcConfig(); loadOcModels(); loadOcStats(); }
@@ -1020,13 +1024,55 @@ async function loadStats() {
   try {
     const d = await api('GET', '/stats');
     const s = d.data;
-    _('statTotal').textContent = s.total;
-    _('statActive').textContent = s.active;
-    _('statCooldown').textContent = s.cooldown;
-    _('statExpired').textContent = s.expired;
     if (s.version) _('settingVersion').value = s.version;
     if (s.strategy) _('settingStrategy').value = s.strategy;
   } catch (e) { /* ignore */ }
+}
+
+// 各模型来源的模型总数 / 免费模型数, 并在有积分的来源上补充剩余积分。
+let modelStatsData = null;
+
+async function loadModelStats() {
+  const box = _('modelStatCards');
+  if (!box) return;
+  try {
+    const d = await api('GET', '/model-stats');
+    modelStatsData = d.data || [];
+    renderModelStatCards();
+  } catch (e) {
+    box.innerHTML = '<div class="empty">加载模型统计失败: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderModelStatCards() {
+  const box = _('modelStatCards');
+  if (!box || !modelStatsData) return;
+  if (!modelStatsData.length) { box.innerHTML = '<div class="empty">暂无模型来源数据</div>'; return; }
+  box.innerHTML = modelStatsData.map(s => {
+    // 只有带积分体系的来源(WorkBuddy / Qoder / Trae)才有余额, 其余来源不显示该行。
+    const p = (creditsData && creditsData[s.key]) || null;
+    let creditRow = '';
+    if (p) {
+      const c = p.credits;
+      if (c) {
+        const pct = c.total > 0 ? Math.min(100, Math.round((c.remain / c.total) * 1000) / 10) : 0;
+        const col = pct > 50 ? 'var(--accent2)' : (pct > 20 ? 'var(--amber)' : 'var(--danger)');
+        creditRow = '<div style="font-size:12px;color:var(--text2);margin-top:6px">剩余积分 <b style="color:' + col + '">' +
+          fmtCredits(c.remain) + '</b> ' + esc(c.unit || 'credits') + '</div>';
+      } else if (p.creditsError) {
+        creditRow = '<div style="font-size:12px;color:var(--text3);margin-top:6px">剩余积分查询失败</div>';
+      }
+    }
+    return '<div class="card">' +
+      '<div class="label" style="font-weight:600;color:var(--text);font-size:13px"><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
+        esc(s.label) + '</span></div>' +
+      '<div style="font-size:12px;color:var(--text2);margin-top:8px;line-height:1.7">大模型数: <b style="color:var(--text)">' +
+        esc(String(s.total)) + '</b></div>' +
+      '<div style="font-size:12px;color:var(--text2);line-height:1.7">免费模型: <b style="color:var(--accent2)">' +
+        esc(String(s.free)) + '</b></div>' +
+      creditRow +
+    '</div>';
+  }).join('');
 }
 
 // ========== 账号管理 ==========
@@ -1797,6 +1843,7 @@ async function loadCredits() {
     renderCredits('qoder', 'qd');
     renderCredits('trae', 'tr');
     renderDashCredits();
+    renderModelStatCards();
   } catch (e) {
     ['wbCreditsBox', 'wbaCreditsBox', 'qdCreditsBox', 'trCreditsBox'].forEach(id => {
       const el = _(id);
@@ -1819,7 +1866,7 @@ function renderDashCredits() {
   const box = _('dashCreditsBox');
   if (!box) return;
   if (!creditsData) { box.innerHTML = '<div class="empty">暂无数据</div>'; return; }
-  box.innerHTML = CREDIT_SOURCES.map(s => {
+  const rows = CREDIT_SOURCES.map(s => {
     const p = creditsData[s.key] || {};
     const c = p.credits;
     const st = p.checkin;
@@ -1831,7 +1878,7 @@ function renderDashCredits() {
         '<span style="font-size:12px;color:var(--text3)"> / ' + fmtCredits(c.total) + ' ' + esc(c.unit || 'credits') + '</span>' +
         (c.planName ? '<span class="badge">' + esc(c.planName) + '</span>' : '');
     } else {
-      left = '<span style="font-size:12px;color:var(--text3)">' + esc(p.creditsError || '余额未知') + '</span>';
+      left = '<span style="font-size:12px;color:var(--text3)">' + esc(p.creditsError || '余额查询失败') + '</span>';
     }
     let right;
     if (!st) {
@@ -1854,6 +1901,29 @@ function renderDashCredits() {
       '<span style="display:flex;align-items:center;gap:8px">' + right + '</span>' +
       '</div>';
   }).join('');
+  box.innerHTML = renderAutoCheckinBanner() + rows;
+}
+
+// 启动期自动签到结果横幅: 让用户一眼看到"程序启动时已经自动领过了"。
+function renderAutoCheckinBanner() {
+  const ac = creditsData && creditsData.autoCheckin;
+  if (!ac || !ac.lastRunAt) return '';
+  const ps = ac.providers || {};
+  const items = CREDIT_SOURCES.map(s => {
+    const o = ps[s.key];
+    if (!o) return '';
+    const mark = o.status === 'success' ? '✅' : (o.status === 'already' ? '☑️' : (o.status === 'error' ? '❌' : '⏭️'));
+    const color = o.status === 'error' ? 'var(--danger)' : (o.status === 'success' ? 'var(--accent2)' : 'var(--text3)');
+    return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:' + color + '">' +
+      mark + ' ' + esc(s.label) + ' ' + esc(o.message || o.status) + '</span>';
+  }).filter(Boolean);
+  if (!items.length) return '';
+  const t = new Date(ac.lastRunAt);
+  const pad = n => (n < 10 ? '0' + n : '' + n);
+  return '<div style="padding:10px 14px;margin:6px 0;background:rgba(148,163,184,.06);border:1px solid var(--border);border-radius:10px">' +
+    '<div style="font-size:12px;color:var(--text2);margin-bottom:6px">🤖 启动自动签到 · ' +
+    esc(t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate()) + ' ' + pad(t.getHours()) + ':' + pad(t.getMinutes()) + ':' + pad(t.getSeconds())) +
+    '</div><div style="display:flex;gap:12px;flex-wrap:wrap">' + items.join('') + '</div></div>';
 }
 
 async function doCheckinAll() {
@@ -1913,22 +1983,30 @@ function renderCredits(key, px) {
   if (key === 'qoder' && p.quotaExceeded) {
     html += '<div style="font-size:12px;color:var(--danger);margin-bottom:10px">⚠ 配额已用尽，调用会返回 insufficient_quota</div>';
   }
-  // Trae 的用量接口还没做过真实联调, 响应字段形态未知: 先挑几个常见键显示,
-  // 挑不出来就把上游原始 JSON 原样摊开 —— 不编造字段名, 也不假装没有数据。
+  // Trae 的用量接口已经实调确认: 余额在 usage_summary(总额/已用),
+  // 上面那块 credits 卡片已经渲染好了; 这里补上分档明细(每张权益包),
+  // 以及原始 JSON 供排查。
   if (key === 'trae' && p.usage) {
     const u = p.usage;
-    const pick = (v) => (v === undefined || v === null) ? null : v;
-    const known = [
-      ['剩余积分', pick(u.remain) ?? pick(u.remaining) ?? pick(u.credit) ?? pick(u.credits)],
-      ['总额度', pick(u.total) ?? pick(u.quota)],
-      ['已用', pick(u.used) ?? pick(u.usage)]
-    ].filter(x => x[1] !== null);
-    if (known.length) {
-      html += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px">' +
-        known.map(x => '<span style="font-size:12px;color:var(--text2)">' + x[0] + ' <strong style="color:var(--accent)">' + esc(String(x[1])) + '</strong></span>').join('') +
-        '</div>';
+    const packs = Array.isArray(u.user_entitlement_pack_list) ? u.user_entitlement_pack_list : [];
+    if (packs.length) {
+      const rows = packs.map(pk => {
+        const base = pk.entitlement_base_info || {};
+        const quota = base.quota || ((base.product_extra || {}).package_extra || {}).quota || {};
+        const limit = quota.credits_limit;
+        const used = (pk.usage || {}).credits_amount;
+        if (!limit && !used) return '';
+        return '<tr><td>' + esc(pk.display_desc || pk.group_name || '-') + '</td>' +
+          '<td class="mono">' + (limit != null ? esc(String(limit)) : '-') + '</td>' +
+          '<td class="mono">' + (used != null ? esc(String(used)) : '-') + '</td></tr>';
+      }).filter(Boolean);
+      if (rows.length) {
+        html += '<details style="margin-bottom:10px"><summary style="font-size:12px;color:var(--text2);cursor:pointer">分档明细（' +
+          rows.length + ' 项）</summary><div class="table-wrap" style="margin-top:8px"><table style="font-size:12px">' +
+          '<thead><tr><th style="text-align:left">权益包</th><th>额度</th><th>已用</th></tr></thead><tbody>' + rows.join('') + '</tbody></table></div></details>';
+      }
     }
-    html += '<details style="margin-bottom:10px"><summary style="font-size:11px;color:var(--text3);cursor:pointer">上游原始用量数据（字段形态待实调确认）</summary>' +
+    html += '<details style="margin-bottom:10px"><summary style="font-size:11px;color:var(--text3);cursor:pointer">上游原始用量数据</summary>' +
       '<pre class="mono" style="font-size:11px;color:var(--text3);white-space:pre-wrap;margin:6px 0 0">' + esc(JSON.stringify(u, null, 2)) + '</pre></details>';
   }
   if (key === 'trae' && st && st.deviceUsed) {
@@ -2627,6 +2705,7 @@ _('chatInput').addEventListener('keydown', e => {
 
 // ========== 初始化 ==========
 loadStats();
+loadModelStats();
 loadAccounts();
 loadKeys();
 loadModels();
@@ -2643,6 +2722,7 @@ if (location.hash.length > 1) {
 }
 loadCredits();
 setInterval(() => { loadStats(); }, 10000);
+setInterval(() => { loadModelStats(); }, 30000);
 setInterval(() => { loadOcStats(); }, 15000);
 setInterval(() => { if (_('tab-logs').style.display !== 'none') loadLogs(); }, 8000);
 </script>
