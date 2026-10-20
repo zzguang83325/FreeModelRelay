@@ -511,20 +511,37 @@ func (c *Client) ModelHeaders(session string) http.Header {
 	return h
 }
 
-// ModelInfo 上游 /models 的单个条目。
+// ModelInfo 上游 /models 的单个条目。type=image 的条目是生图模型（只能走
+// /images/generations）；id=auto 是客户端的路由别名（无固定倍率），调用方应跳过。
 type ModelInfo struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
+	Type            string `json:"type"`
 	ContextLength   int    `json:"context_length"`
 	MaxOutputTokens int    `json:"max_output_tokens"`
 	Capabilities    struct {
-		Reasoning       bool `json:"reasoning"`
-		Vision          bool `json:"vision"`
-		FunctionCalling bool `json:"function_calling"`
-		Streaming       bool `json:"streaming"`
+		Reasoning        bool     `json:"reasoning"`
+		Vision           bool     `json:"vision"`
+		FunctionCalling  bool     `json:"function_calling"`
+		Streaming        bool     `json:"streaming"`
+		InputModalities  []string `json:"input_modalities"`
+		OutputModalities []string `json:"output_modalities"`
 	} `json:"capabilities"`
 	ReasoningEfforts json.RawMessage `json:"reasoning_efforts,omitempty"`
 	Modalities       []string        `json:"modalities,omitempty"`
+}
+
+// IsImageModel 生图判定：type=image 或输出模态含 image。比名称关键词可靠。
+func (m ModelInfo) IsImageModel() bool {
+	if m.Type == "image" {
+		return true
+	}
+	for _, mod := range m.Capabilities.OutputModalities {
+		if mod == "image" {
+			return true
+		}
+	}
+	return false
 }
 
 // FetchModels 拉取模型目录。响应可能是裸数组 / {"data":[...]} /

@@ -544,10 +544,13 @@ func providerModelList() []map[string]any {
 	}
 	if getLoomyConfig().Enabled {
 		for _, m := range loomyModelList() {
-			// loomy 的图片模型上游没标倍率(按点数实扣), 与 trae 同理不能标 free;
-			// 标价模型从显示名解析倍率。imageGen 标志透传给客户端与后台。
+			// 倍率 0 有两种含义: 显式标 x0.0(限时免费) vs 图片模型没标价(按点数
+			// 实扣)。只有前者标 free。
 			cost := "paid"
 			mult, _ := m["priceFactor"].(float64)
+			if free, _ := m["free"].(bool); free {
+				cost = "free"
+			}
 			name, _ := m["name"].(string)
 			baseID, _ := m["baseId"].(string)
 			item := map[string]any{

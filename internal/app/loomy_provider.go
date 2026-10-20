@@ -274,7 +274,9 @@ type loomyModelInfo struct {
 	DisplayName     string
 	Context         int
 	Output          int
-	Multiplier      float64 // 点数倍率, 从显示名 "(x0.8)" 解析; 0 = 上游未标价(图片模型)
+	Multiplier      float64 // 点数倍率, 从显示名 "(x0.8)"/"（x4.0）" 解析
+	Priced          bool    // 显示名里有没有倍率段: 图片模型没有(按点数实扣), 不能当免费
+	Free            bool    // 显式标价 x0.0 (限时免费)
 	Reasoning       bool
 	Vision          bool
 	Streaming       bool
@@ -282,12 +284,15 @@ type loomyModelInfo struct {
 	ImageGen        bool
 }
 
-var loomyMultRe = regexp.MustCompile(`\(x([0-9]+(?:\.[0-9]+)?)\)`)
+// 倍率段两种形态: "Flash(x2.0)" 半角 与 "M3 （x4.0）" 全角括号
+var loomyMultRe = regexp.MustCompile("[\\(（]x([0-9]+(?:\\.[0-9]+)?)[\\)）]")
 
-// loomyIsImageModel 图片生成模型判定: 上游目录的 capabilities 没有生图字段,
-// 图片模型是独立条目(如 Hy-Image-3.5-preview / doubao-seedream-5-lite /
-// qwen-image-3.0-pro), 按 id/name 关键词识别, 后台实测探测可覆盖。
-func loomyIsImageModel(id, name string) bool {
+// loomyIsImageModel 生图判定: 优先上游 type=image / output_modalities,
+// 名称关键词兜底(上游改版丢字段时仍能识别)。
+func loomyIsImageModel(id, name string, m loomy.ModelInfo) bool {
+	if m.IsImageModel() {
+		return true
+	}
 	s := strings.ToLower(id + " " + name)
 	return strings.Contains(s, "image") || strings.Contains(s, "seedream") ||
 		strings.Contains(s, "wanx") || strings.Contains(s, "flux")
@@ -325,18 +330,19 @@ func loomySyncModels() (int, error) {
 	}
 	next := map[string]loomyModelInfo{}
 	for _, m := range list {
-		if m.ID == "" || providerIsAliasModel(m.ID) {
+		// auto 是客户端的"自动均衡"路由别名, 不是真实模型; 其余要求有 id
+		if m.ID == "" || m.ID == "auto" || providerIsAliasModel(m.ID) {
 			continue
 		}
 		mult, priced := loomyMultiplierFromName(m.Name)
 		next[m.ID] = loomyModelInfo{
 			Key: m.ID, DisplayName: m.Name, Context: m.ContextLength,
-			Output: m.MaxOutputTokens, Multiplier: mult,
+			Output: m.MaxOutputTokens, Multiplier: mult, Priced: priced,
+			Free:      priced && mult == 0,
 			Reasoning: m.Capabilities.Reasoning, Vision: m.Capabilities.Vision,
 			Streaming: m.Capabilities.Streaming, FunctionCalling: m.Capabilities.FunctionCalling,
-			ImageGen: loomyIsImageModel(m.ID, m.Name) && !m.Capabilities.FunctionCalling,
+			ImageGen: loomyIsImageModel(m.ID, m.Name, m) && !m.Capabilities.FunctionCalling,
 		}
-		_ = priced
 	}
 	if len(next) == 0 {
 		return 0, fmt.Errorf("上游未返回可用模型")
@@ -376,6 +382,8 @@ func loomyModelList() []map[string]any {
 			"output":      m.Output,
 			"price":       m.Multiplier,
 			"priceFactor": m.Multiplier,
+			"priced":      m.Priced,
+			"free":        m.Free,
 			"reason":      m.Reasoning,
 			"image":       image,
 			"video":       video,
@@ -834,11 +842,14 @@ func loomyRefreshAccount(a *loomyAccount) error {
 	return loomyRefreshPoints(a)
 }
 
-// loomySessionKeeper 后台协程: 每 6 小时检查一次, session 剩余不足 3 天且有
-// 密码的账号自动重登(14 天 session, 无 refresh token), 顺带刷新点数缓存。
+// loomySessionKeeper 后台协程: 启动先跑一轮(点数缓存是内存态, 重启即失),
+// 之后每 6 小时检查一次 —— session 剩余不足 3 天且有密码的账号自动重登
+// (14 天 session, 无 refresh token), 顺带刷新点数缓存。
 func loomySessionKeeper() {
-	for {
-		time.Sleep(6 * time.Hour)
+	for round := 0; ; round++ {
+		if round > 0 {
+			time.Sleep(6 * time.Hour)
+		}
 		for _, a := range loomyLoadAccounts() {
 			if !a.Enabled {
 				continue
