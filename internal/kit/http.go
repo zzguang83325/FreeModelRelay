@@ -20,10 +20,22 @@ var HTTPTransport = &http.Transport{
 	IdleConnTimeout:       90 * time.Second,
 	DisableCompression:    false,
 	ResponseHeaderTimeout: 120 * time.Second, // 上游 2 分钟未返回响应头则中断，防止无限等待
+	// 动态代理解析: 逐请求按当前配置决定走代理还是直连。
+	// 配置变更后由 SetEgressProxy 调用 CloseIdleConnections, 新请求立即生效。
+	Proxy: EgressProxyFor,
 }
 
 var HTTPClient = &http.Client{
 	Transport: HTTPTransport,
+}
+
+// NewHTTPClient 创建使用统一出口代理的客户端。
+// 所有上游请求都应通过它创建, 以保证代理行为一致。
+func NewHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Transport: HTTPTransport,
+		Timeout:   timeout,
+	}
 }
 
 func HTTPPostForm(rawURL string, form url.Values) (*http.Response, error) {

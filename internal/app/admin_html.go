@@ -235,6 +235,7 @@ body:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
 <div class="nav-item" data-tab="qoder"><span class="nav-ico">🔷</span> Qoder账号管理</div>
 <div class="nav-item" data-tab="trae"><span class="nav-ico">🟣</span> Trae账号管理</div>
 <div class="nav-item" data-tab="chat"><span class="nav-ico">💬</span> 模型聊天</div>
+<div class="nav-item" data-tab="egress-proxy"><span class="nav-ico">🧭</span> 网络设置</div>
 <div class="nav-item" data-tab="logs"><span class="nav-ico">📜</span> 请求日志</div>
 <div class="sidebar-footer">
   <div>管理面板: <a href="/admin/">/admin/</a></div>
@@ -537,6 +538,42 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
       </tbody>
     </table>
     </div>
+  </div>
+</div>
+</div>
+
+<div id="tab-egress-proxy" class="tab-panel" style="display:none">
+<h2>🧭 网络设置（统一出口）</h2>
+
+<div class="section">
+  <div class="section-title">📡 生效状态</div>
+  <div class="section-body">
+    <div class="form-row">
+      <div class="field"><label>当前出口</label><span id="epEffective" class="hint" style="margin:0;align-self:center">-</span></div>
+      <div class="field"><label>来源</label><span id="epSource" class="hint" style="margin:0;align-self:center">-</span></div>
+    </div>
+    <div class="form-row">
+      <div class="field"><label>系统代理检测</label><span id="epSystem" class="hint" style="margin:0;align-self:center">-</span></div>
+    </div>
+    <div class="hint" style="margin-top:4px">优先级：手动指定 &gt; Windows 系统代理 &gt; HTTP_PROXY / HTTPS_PROXY 环境变量 &gt; 直连。本机回环地址（127.0.0.1 / ::1）永远直连。opencode zen 页的「代理列表」是 zen 通道专用的多出口轮询池，优先级高于本页设置。</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">⚙️ 代理设置</div>
+  <div class="section-body">
+    <div class="form-row">
+      <div class="field">
+        <label>跟随 Windows 系统代理</label>
+        <select id="epFollowSystem"><option value="true">开启（推荐）</option><option value="false">关闭</option></select>
+      </div>
+      <div class="field">
+        <label>手动代理地址（可选，优先级最高）</label>
+        <input type="text" id="epManual" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080（留空=不手动指定）">
+      </div>
+    </div>
+    <div class="hint" style="margin-bottom:8px">v2rayN 等软件「自动配置系统代理」写入的就是系统代理，开启上面的开关即可自动跟随；开启 TUN 模式时本程序无须任何配置也会走 TUN 出口。</div>
+    <div class="form-actions"><button class="btn btn-primary" onclick="saveEgressProxyConfig()">💾 保存代理设置</button></div>
   </div>
 </div>
 </div>
@@ -964,6 +1001,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
     if (el.dataset.tab === 'trae') { loadProviders(); loadTraeConfig(); loadCredits(); }
     if (el.dataset.tab === 'chat') loadChatModels();
     if (el.dataset.tab === 'models') loadAllModels();
+    if (el.dataset.tab === 'egress-proxy') loadEgressProxyConfig();
   });
 });
 
@@ -983,6 +1021,7 @@ function switchTab(name) {
   if (name === 'trae') { loadProviders(); loadTraeConfig(); loadCredits(); }
   if (name === 'chat') loadChatModels();
   if (name === 'models') loadAllModels();
+  if (name === 'egress-proxy') loadEgressProxyConfig();
 }
 
 // Cline 子标签
@@ -1648,6 +1687,47 @@ async function saveOcConfig() {
     const d = await api('POST', '/opencode/config/update', body);
     toast('opencode 配置已保存', 'success');
     loadOcConfig();
+  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
+}
+
+const EP_SOURCE_TEXT = {
+  manual: '手动指定',
+  system: 'Windows 系统代理',
+  env: '环境变量 (HTTP_PROXY / HTTPS_PROXY)',
+  direct: '直连'
+};
+
+async function loadEgressProxyConfig() {
+  try {
+    const d = await api('GET', '/egress-proxy');
+    const c = d.data || {};
+    _('epFollowSystem').value = String(c.followSystem !== false);
+    _('epManual').value = c.manual || '';
+    _('epEffective').textContent = c.effective || '直连';
+    _('epSource').textContent = EP_SOURCE_TEXT[c.source] || c.source || '-';
+    _('epSystem').textContent = c.systemOn
+      ? ('已启用 · ' + (c.systemProxy || '-'))
+      : '未启用（将直连，除非手动指定或设置了环境变量）';
+  } catch (e) {
+    _('epEffective').textContent = '加载失败';
+    _('epSource').textContent = '-';
+    _('epSystem').textContent = '-';
+  }
+}
+
+async function saveEgressProxyConfig() {
+  const manual = _('epManual').value.trim();
+  if (manual) {
+    const PROXY_RE = /^(https?|socks5h?):\/\/[^\s]+:\d+/;
+    if (!PROXY_RE.test(manual)) { toast('代理格式无效: ' + manual + '（需 http(s)://host:port 或 socks5://host:port）', 'error'); return; }
+  }
+  try {
+    await api('POST', '/egress-proxy/update', {
+      manual: manual,
+      followSystem: _('epFollowSystem').value === 'true'
+    });
+    toast('代理设置已保存', 'success');
+    loadEgressProxyConfig();
   } catch (e) { toast('保存失败: ' + e.message, 'error'); }
 }
 

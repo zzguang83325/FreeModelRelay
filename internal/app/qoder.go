@@ -269,7 +269,7 @@ func qoderExchange(a *qoderAccount) error {
 	req.Header.Set("cosy-version", "1.0.1")
 	req.Header.Set("cosy-clienttype", qoderClientType)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := kit.NewHTTPClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		a.LastError = err.Error()
@@ -330,7 +330,7 @@ func qoderFetchUserInfo(a *qoderAccount) error {
 	req.Header.Set("cosy-version", "1.0.1")
 	req.Header.Set("cosy-clienttype", qoderClientType)
 
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := kit.NewHTTPClient(20 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -564,7 +564,7 @@ func qoderSyncModels() (int, error) {
 	req.Header.Set("accept", "application/json")
 	req.Header.Set("accept-encoding", "identity")
 
-	client := &http.Client{Timeout: 25 * time.Second}
+	client := kit.NewHTTPClient(25 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
@@ -751,7 +751,7 @@ func qoderCallChat(params map[string]any, m qoderModelInfo, a *qoderAccount) (*h
 		req.Header.Set("accept", "text/event-stream")
 		req.Header.Set("accept-encoding", "identity")
 
-		client := &http.Client{Timeout: 10 * time.Minute}
+		client := kit.NewHTTPClient(10 * time.Minute)
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err

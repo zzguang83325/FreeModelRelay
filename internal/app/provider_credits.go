@@ -111,7 +111,7 @@ func wbPostJSON(v *wbVariant, a *wbAccount, path string, payload any, timeout ti
 			return nil, 0, err
 		}
 		wbCommonHeaders(req, a, v)
-		client := &http.Client{Timeout: timeout}
+		client := kit.NewHTTPClient(timeout)
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil, 0, err
@@ -152,7 +152,7 @@ func wbRefreshAccessToken(v *wbVariant, a *wbAccount) error {
 	req.Header.Set("X-Auth-Refresh-Source", "plugin")
 	req.Header.Set("Origin", v.Origin)
 	req.Header.Set("User-Agent", wbUserAgent(v))
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := kit.NewHTTPClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -398,7 +398,7 @@ func qoderOpenAPIReq(a *qoderAccount, clientType, method, path string, payload [
 	if payload != nil {
 		h.Set("content-type", "application/json")
 	}
-	client := &http.Client{Timeout: 25 * time.Second}
+	client := kit.NewHTTPClient(25 * time.Second)
 	return client.Do(req)
 }
 

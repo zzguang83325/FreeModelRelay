@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 344" width="680" height="344" role="img" aria-labelledby="ttl desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 360" width="680" height="360" role="img" aria-labelledby="ttl desc">
   <title id="ttl">FreeModelRelay 架构总览</title>
-  <desc id="desc">客户端通过 OpenAI Chat、Anthropic Messages、OpenAI Responses 三种协议接入本地网关，网关按请求中的 model 字段路由到 opencode zen、Cline、WorkBuddy、WorkBuddy AI、Qoder 五个上游来源。</desc>
+  <desc id="desc">客户端通过 OpenAI Chat、Anthropic Messages、OpenAI Responses 三种协议接入本地网关，网关按请求中的 model 字段路由到 opencode zen、Cline、WorkBuddy、WorkBuddy AI、Qoder、Trae 六个上游来源。</desc>
 
   <style>
     .f  { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
@@ -48,46 +48,51 @@
     </marker>
   </defs>
 
-  <rect class="client-box" x="40" y="150" width="140" height="64" rx="8" stroke-width="0.5"/>
-  <text class="f t client-t" x="110" y="172" text-anchor="middle" dominant-baseline="central">客户端</text>
-  <text class="f s client-s" x="110" y="192" text-anchor="middle" dominant-baseline="central">Claude Code · Cursor</text>
+  <rect class="client-box" x="40" y="158" width="140" height="64" rx="8" stroke-width="0.5"/>
+  <text class="f t client-t" x="110" y="180" text-anchor="middle" dominant-baseline="central">客户端</text>
+  <text class="f s client-s" x="110" y="200" text-anchor="middle" dominant-baseline="central">Claude Code · Cursor</text>
 
-  <path class="edge" d="M180 182 L236 181" marker-end="url(#arrow)"/>
+  <path class="edge" d="M180 190 L236 189" marker-end="url(#arrow)"/>
 
-  <rect class="gw-box" x="240" y="100" width="180" height="160" rx="12" stroke-width="0.5"/>
-  <text class="f t gw-t" x="330" y="122" text-anchor="middle" dominant-baseline="central">FreeModelRelay</text>
-  <text class="f s gw-s" x="330" y="140" text-anchor="middle" dominant-baseline="central">127.0.0.1:9999</text>
+  <rect class="gw-box" x="240" y="108" width="180" height="160" rx="12" stroke-width="0.5"/>
+  <text class="f t gw-t" x="330" y="130" text-anchor="middle" dominant-baseline="central">FreeModelRelay</text>
+  <text class="f s gw-s" x="330" y="148" text-anchor="middle" dominant-baseline="central">127.0.0.1:9999</text>
 
-  <rect class="pill" x="256" y="156" width="148" height="24" rx="6" stroke-width="0.5"/>
-  <text class="f s pill-t" x="330" y="168" text-anchor="middle" dominant-baseline="central">OpenAI Chat</text>
-  <rect class="pill" x="256" y="186" width="148" height="24" rx="6" stroke-width="0.5"/>
-  <text class="f s pill-t" x="330" y="198" text-anchor="middle" dominant-baseline="central">Anthropic Messages</text>
-  <rect class="pill" x="256" y="216" width="148" height="24" rx="6" stroke-width="0.5"/>
-  <text class="f s pill-t" x="330" y="228" text-anchor="middle" dominant-baseline="central">OpenAI Responses</text>
+  <rect class="pill" x="256" y="164" width="148" height="24" rx="6" stroke-width="0.5"/>
+  <text class="f s pill-t" x="330" y="176" text-anchor="middle" dominant-baseline="central">OpenAI Chat</text>
+  <rect class="pill" x="256" y="194" width="148" height="24" rx="6" stroke-width="0.5"/>
+  <text class="f s pill-t" x="330" y="206" text-anchor="middle" dominant-baseline="central">Anthropic Messages</text>
+  <rect class="pill" x="256" y="224" width="148" height="24" rx="6" stroke-width="0.5"/>
+  <text class="f s pill-t" x="330" y="236" text-anchor="middle" dominant-baseline="central">OpenAI Responses</text>
 
-  <path class="edge" d="M420 180 C460 180 460 62 496 62" marker-end="url(#arrow)"/>
-  <path class="edge" d="M420 180 C460 180 460 122 496 122" marker-end="url(#arrow)"/>
-  <path class="edge" d="M420 180 L496 182" marker-end="url(#arrow)"/>
-  <path class="edge" d="M420 180 C460 180 460 242 496 242" marker-end="url(#arrow)"/>
-  <path class="edge" d="M420 180 C460 180 460 302 496 302" marker-end="url(#arrow)"/>
+  <path class="edge" d="M420 188 C460 188 460 50 496 50" marker-end="url(#arrow)"/>
+  <path class="edge" d="M420 188 C460 188 460 104 496 104" marker-end="url(#arrow)"/>
+  <path class="edge" d="M420 188 C460 188 460 158 496 158" marker-end="url(#arrow)"/>
+  <path class="edge" d="M420 188 C460 188 460 212 496 212" marker-end="url(#arrow)"/>
+  <path class="edge" d="M420 188 C460 188 460 266 496 266" marker-end="url(#arrow)"/>
+  <path class="edge" d="M420 188 C460 188 460 320 496 320" marker-end="url(#arrow)"/>
 
-  <rect class="up-box" x="500" y="40" width="140" height="44" rx="8" stroke-width="0.5"/>
-  <text class="f t up-t" x="570" y="54" text-anchor="middle" dominant-baseline="central">opencode zen</text>
-  <text class="f s up-s" x="570" y="70" text-anchor="middle" dominant-baseline="central">匿名免费额度</text>
+  <rect class="up-box" x="500" y="28" width="140" height="44" rx="8" stroke-width="0.5"/>
+  <text class="f t up-t" x="570" y="42" text-anchor="middle" dominant-baseline="central">opencode zen</text>
+  <text class="f s up-s" x="570" y="58" text-anchor="middle" dominant-baseline="central">匿名免费额度</text>
 
-  <rect class="up-box" x="500" y="100" width="140" height="44" rx="8" stroke-width="0.5"/>
-  <text class="f t up-t" x="570" y="114" text-anchor="middle" dominant-baseline="central">Cline</text>
-  <text class="f s up-s" x="570" y="130" text-anchor="middle" dominant-baseline="central">多账号轮询</text>
+  <rect class="up-box" x="500" y="82" width="140" height="44" rx="8" stroke-width="0.5"/>
+  <text class="f t up-t" x="570" y="96" text-anchor="middle" dominant-baseline="central">Cline</text>
+  <text class="f s up-s" x="570" y="112" text-anchor="middle" dominant-baseline="central">多账号轮询</text>
 
-  <rect class="up-box" x="500" y="160" width="140" height="44" rx="8" stroke-width="0.5"/>
-  <text class="f t up-t" x="570" y="174" text-anchor="middle" dominant-baseline="central">WorkBuddy</text>
-  <text class="f s up-s" x="570" y="190" text-anchor="middle" dominant-baseline="central">中国版 · 积分</text>
+  <rect class="up-box" x="500" y="136" width="140" height="44" rx="8" stroke-width="0.5"/>
+  <text class="f t up-t" x="570" y="150" text-anchor="middle" dominant-baseline="central">WorkBuddy</text>
+  <text class="f s up-s" x="570" y="166" text-anchor="middle" dominant-baseline="central">中国版 · 积分</text>
 
-  <rect class="up-box" x="500" y="220" width="140" height="44" rx="8" stroke-width="0.5"/>
-  <text class="f t up-t" x="570" y="234" text-anchor="middle" dominant-baseline="central">WorkBuddy AI</text>
-  <text class="f s up-s" x="570" y="250" text-anchor="middle" dominant-baseline="central">国际版 · 积分</text>
+  <rect class="up-box" x="500" y="190" width="140" height="44" rx="8" stroke-width="0.5"/>
+  <text class="f t up-t" x="570" y="204" text-anchor="middle" dominant-baseline="central">WorkBuddy AI</text>
+  <text class="f s up-s" x="570" y="220" text-anchor="middle" dominant-baseline="central">国际版 · 积分</text>
 
-  <rect class="up-box" x="500" y="280" width="140" height="44" rx="8" stroke-width="0.5"/>
-  <text class="f t up-t" x="570" y="294" text-anchor="middle" dominant-baseline="central">Qoder</text>
-  <text class="f s up-s" x="570" y="310" text-anchor="middle" dominant-baseline="central">阿里 · PAT 令牌</text>
+  <rect class="up-box" x="500" y="244" width="140" height="44" rx="8" stroke-width="0.5"/>
+  <text class="f t up-t" x="570" y="258" text-anchor="middle" dominant-baseline="central">Qoder</text>
+  <text class="f s up-s" x="570" y="274" text-anchor="middle" dominant-baseline="central">阿里 · PAT 令牌</text>
+
+  <rect class="up-box" x="500" y="298" width="140" height="44" rx="8" stroke-width="0.5"/>
+  <text class="f t up-t" x="570" y="312" text-anchor="middle" dominant-baseline="central">Trae</text>
+  <text class="f s up-s" x="570" y="328" text-anchor="middle" dominant-baseline="central">CN 区 · 积分</text>
 </svg>

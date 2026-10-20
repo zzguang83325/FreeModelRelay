@@ -232,6 +232,12 @@ func zenDialContext(ctx context.Context, network, addr string) (net.Conn, error)
 		pk.url = p
 	}
 	if p == "" {
+		// zen 专用代理池为空: 回退到统一出口代理(手动 > 系统代理 > 环境变量 > 直连)
+		if u, _ := kit.ResolveEgressProxy("https", addr); u != nil {
+			p = u.String()
+		}
+	}
+	if p == "" {
 		d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 		return d.DialContext(ctx, network, addr)
 	}

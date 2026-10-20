@@ -1,8 +1,8 @@
 package app
 
 import (
-	"bytes"
 	"FreeModelRelay/internal/kit"
+	"bytes"
 	"compress/gzip"
 	"compress/zlib"
 	"context"
@@ -767,8 +767,9 @@ func callZenAPI(params map[string]any, stream bool) (*http.Response, int, error)
 		if isRateLimited(resp.StatusCode, bodyBytes) {
 			rateLimited++
 			// 冷却本次请求实际拨号使用的代理; 未拨号(连接复用)时回退到计数法
+			// 代理池为空时走的是统一出口代理, 没有池内索引可冷却, 跳过
 			idx := pick.idx
-			if idx < 0 {
+			if idx < 0 && len(getZenConfig().Proxies) > 0 {
 				idx = lastZenProxyIdx()
 			}
 			if idx >= 0 {
@@ -809,7 +810,12 @@ func describeZenProxy() string {
 	cfg := getZenConfig()
 	proxies := cfg.Proxies
 	if len(proxies) == 0 {
-		return "direct"
+		// 池为空: 走统一出口代理(手动 > 系统代理 > 环境变量 > 直连)
+		u, src := kit.ResolveEgressProxy("https", "example.com:443")
+		if u == nil {
+			return "direct"
+		}
+		return fmt.Sprintf("%s=%s", src, kit.Truncate(maskProxyURL(u.String()), 60))
 	}
 	idx := lastZenProxyIdx()
 	if idx < 0 {
@@ -849,7 +855,7 @@ func syncZenModels() (int, error) {
 		return 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.Key)
-	client := &http.Client{Timeout: 25 * time.Second}
+	client := kit.NewHTTPClient(25 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err

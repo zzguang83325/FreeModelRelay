@@ -221,7 +221,7 @@ func wbRefreshAccount(a *wbAccount) error {
 	req.Header.Set("X-Refresh-Token", a.RefreshToken)
 	req.Header.Set("X-Auth-Refresh-Source", "plugin")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := kit.NewHTTPClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		a.LastError = err.Error()
@@ -427,7 +427,7 @@ func wbFetchModels(v *wbVariant, a *wbAccount) ([]wbModelInfo, error) {
 			return nil, err
 		}
 		wbCommonHeaders(req, a, v)
-		client := &http.Client{Timeout: 25 * time.Second}
+		client := kit.NewHTTPClient(25 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
@@ -806,7 +806,7 @@ func wbCallChat(params map[string]any, m wbModelInfo, conversationID string) (*h
 				return nil, nil, err
 			}
 			wbChatHeaders(req, acc, v, conversationID)
-			client := &http.Client{Timeout: 10 * time.Minute}
+			client := kit.NewHTTPClient(10 * time.Minute)
 			resp, err := client.Do(req)
 			if err != nil {
 				lastErr = err

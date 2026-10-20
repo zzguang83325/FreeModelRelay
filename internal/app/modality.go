@@ -20,8 +20,8 @@ import (
 // ============================================================================
 // 模态探测
 //
-// 五个上游里只有 zen(官方 modalities.input)和 WorkBuddy(disabledMultimodal)
-// 会在目录里声明模态; Qoder 与 cline 的目录完全没有这个字段。目录给不出的,
+// 六个上游里只有 zen(官方 modalities.input)和 WorkBuddy(disabledMultimodal)
+// 会在目录里声明模态; Qoder、cline、Trae 的目录完全没有这个字段。目录给不出的,
 // 后台就显示"?" —— 但这不代表不支持, 用户需要能自己验证。
 //
 // 探测走的是本代理自己的 /v1/chat/completions, 即完整链路(路由 → 上游 →
@@ -217,7 +217,7 @@ func probeModelModality(model string) modalityEntry {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
 
-	client := &http.Client{Timeout: modalityProbeTimeout}
+	client := kit.NewHTTPClient(modalityProbeTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return modalityEntry{CheckedAt: time.Now().UnixMilli(), Note: modalityShortNote("请求失败: " + err.Error())}

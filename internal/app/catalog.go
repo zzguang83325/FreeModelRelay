@@ -211,7 +211,7 @@ func refreshCatalog() error {
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", kit.ZenUserAgent())
-	client := &http.Client{Timeout: catalogTimeout}
+	client := kit.NewHTTPClient(catalogTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

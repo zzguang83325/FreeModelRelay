@@ -4,7 +4,7 @@
 
 ## 1. 项目定位
 
-Go 编写的本地 API 网关，把五个上游封装成三种标准协议对外提供：
+Go 编写的本地 API 网关，把六个上游封装成三种标准协议对外提供：
 
 ```
 客户端 (Trae/Claude Code/Cursor/Cherry Studio/任意 OpenAI 兼容客户端)
@@ -19,7 +19,7 @@ FreeModelRelay (默认 127.0.0.1:9999)
    ├──► WorkBuddy 中国版       (copilot.tencent.com, 桌面端凭据自动导入)
    ├──► WorkBuddy AI 国际版    (www.workbuddy.ai, 同上)
    ├──► Qoder 中国区           (gateway.qoder.com.cn, PAT 手动添加)
-   └──► Trae 中国区            (solo.trae.cn / api.trae.cn, 凭据 JSON 手动粘贴)
+   └──► Trae 中国区            (trae-api-cn.mchost.guru / api.trae.cn, 桌面端凭据自动导入)
 ```
 
 模块名 `FreeModelRelay`。除标准库外只有两个直接依赖（均在 [proxy_pool.go](internal/app/proxy_pool.go#L20-L22) 引用）：`github.com/refraction-networking/utls`（zen 出口代理池的 TLS 指纹载体，`utls.UClient` + `HelloChrome_133`）与 `golang.org/x/net`（`http2` 传输 + `proxy` 的 socks5 拨号）；`brotli` / `klauspost/compress` / `x/crypto` / `x/sys` / `x/text` 都是这两者的间接依赖。
@@ -39,7 +39,7 @@ go build -o FreeModelRelay.exe .
 
 CLI flags 定义在 [main.go](main.go#L14-L18)，只剩三个：`-host`(**默认 `127.0.0.1`**) `-port`(默认 **9999**) `-start`。
 
-> **已移除 `-login` / `-add-account` / `-list`。** 这三个是 Cline 专用流程，而项目现在覆盖六家上游，各家导入方式不同（Cline 走 OAuth/令牌/批量 JSON，WorkBuddy 走本机自动解密导入，Qoder 走粘贴 PAT，Trae 走粘贴凭据 JSON），CLI 无法统一；后台还提供测试 / 重置 / 删除，CLI 也做不到。账号管理统一收敛到 `/admin/`，OAuth 设备授权流程由 [admin.go](internal/app/admin.go) 的 `handleOAuthStart` / `handleOAuthPoll` 承担，`pool.AddAccountFromDeviceAuth` 已随之删除。
+> **已移除 `-login` / `-add-account` / `-list`。** 这三个是 Cline 专用流程，而项目现在覆盖六家上游，各家导入方式不同（Cline 走 OAuth/令牌/批量 JSON，WorkBuddy 走本机自动解密导入，Qoder 走粘贴 PAT，Trae 走本机自动解密导入 + 手动凭据 JSON 兜底），CLI 无法统一；后台还提供测试 / 重置 / 删除，CLI 也做不到。账号管理统一收敛到 `/admin/`，OAuth 设备授权流程由 [admin.go](internal/app/admin.go) 的 `handleOAuthStart` / `handleOAuthPoll` 承担，`pool.AddAccountFromDeviceAuth` 已随之删除。
 
 > [proxy.go](internal/app/proxy.go#L24) 的 `proxyListenAddress` 是展示兜底常量（初值 `127.0.0.1:9999`），[proxy.go](internal/app/proxy.go#L306) 启动时会用实际监听地址覆盖它；实际监听地址以 flag 为准。
 
@@ -67,6 +67,7 @@ internal/
     workbuddy_probe.go      WorkBuddy 模型可用性探测 (带 TTL 缓存)
     qoder.go                Qoder 签名 / 模型同步 / 聊天转发 / 账号管理
     trae.go                 Trae 凭据 / 模型同步 / 聊天转发 / 签到 / 令牌续期
+    trae_local.go           Trae 本机凭据解密导入 (storage.json / CLI token)
     provider_chat.go        第三方 provider 路由 / 展示 id 装饰 / 三协议适配
     provider_sse.go         provider 侧 SSE 中继 / 聚合 / 内层错误信封解包
     provider_credits.go     各来源积分查询与签到
@@ -104,7 +105,7 @@ data/                       运行时数据 (gitignore, 相对路径)
 
 | 函数 | 位置 | 行为 |
 |------|------|------|
-| `resolveRouteModel(raw)` | [models.go](internal/app/models.go#L423) | 入口。先判 provider，再剥展示装饰归一成真实 id 后判 cline/zen；空/未知 → 回退默认模型。返回 `(model, route)`，route ∈ `zen`/`reject`/`cline`/`workbuddy`/`workbuddy-ai`/`qoder` |
+| `resolveRouteModel(raw)` | [models.go](internal/app/models.go#L423) | 入口。先判 provider，再剥展示装饰归一成真实 id 后判 cline/zen；空/未知 → 回退默认模型。返回 `(model, route)`，route ∈ `zen`/`reject`/`cline`/`workbuddy`/`workbuddy-ai`/`qoder`/`trae` |
 | `routeModelAny(id)` | [models.go](internal/app/models.go#L412) | `routeModel` 的补全版：先 `providerRoute` 判第三方 provider，再落到 cline/zen 判定。**空 model 兜底必须走它** |
 | `routeModel(id)` | [zen.go](internal/app/zen.go#L132) | 只认识 zen/cline/reject：zen 免费→zen；zen 付费→reject；`opencode/` 前缀剥除；其余→cline |
 | `isKnownModel(id)` | [models.go](internal/app/models.go#L392) | 模型是否可识别：cline 模型表 ∪ zen 免费 ∪ 第三方 provider |
@@ -144,15 +145,15 @@ data/                       运行时数据 (gitignore, 相对路径)
 
 **为什么显示名必须进 id**：用户看到 `dfmodel` 不知道是什么模型。显示名来自上游目录（Qoder 的 `display_name`、WorkBuddy 目录的 name），跨来源同名时靠倍率段区分（WB CN `GLM-5.3 · x0.79` vs Qoder `GLM-5.3 · x0.8`）。
 
-**owned_by 分组**：`/v1/models` 各来源的 `owned_by` 分别是 `cline-free` / `opencode-zen` / `workbuddy` / `workbuddy-ai` / `qoder`，客户端据此分组。WorkBuddy 两个变体的 `source` 都是 `workbuddy`，靠 `owned_by` 区分。
+**owned_by 分组**：`/v1/models` 各来源的 `owned_by` 分别是 `cline-free` / `opencode-zen` / `workbuddy` / `workbuddy-ai` / `qoder` / `trae`，客户端据此分组。WorkBuddy 两个变体的 `source` 都是 `workbuddy`，靠 `owned_by` 区分。
 
 ### 5.2 第三方 provider 路由判定（providerRoute）
 
 按四级顺序（[provider_chat.go](internal/app/provider_chat.go#L475)）：
 
 1. **显式前缀**：`workbuddy/`、`wb/` → CN；`workbuddy-ai/`、`wb-ai/`、`workbuddyai/` → INTL；`qoder/`、`qd/` → Qoder；`trae/`、`tr/` → Trae（`opencode/` 前缀排除在外，它属于 zen 命名空间）
-2. **完整装饰串精确匹配**：`wbResolveDecorated(id)`（[workbuddy_client.go](internal/app/workbuddy_client.go#L658)）/ `qoderResolveDecorated(id)`（[qoder.go](internal/app/qoder.go#L666)）。**必须在剥装饰之前** —— 显示名跨 provider 冲突时倍率段是唯一区分，剥掉装饰再裸名解析会丢失归属
-3. **裸名兜底**：剥装饰后 `wbResolveModel(stripped)`（[workbuddy_client.go](internal/app/workbuddy_client.go#L595)）/ `qoderResolveModel(stripped)`，内部路由 id 或显示名都可命中（显示名走 `wbResolveByNameIn`，[workbuddy_client.go](internal/app/workbuddy_client.go#L626)）
+2. **完整装饰串精确匹配**：`wbResolveDecorated(id)`（[workbuddy_client.go](internal/app/workbuddy_client.go#L658)）/ `qoderResolveDecorated(id)`（[qoder.go](internal/app/qoder.go#L666)）/ `traeResolveDecorated(id)`。**必须在剥装饰之前** —— 显示名跨 provider 冲突时倍率段是唯一区分，剥掉装饰再裸名解析会丢失归属
+3. **裸名兜底**：剥装饰后 `wbResolveModel(stripped)`（[workbuddy_client.go](internal/app/workbuddy_client.go#L595)）/ `qoderResolveModel(stripped)` / `traeResolveModel(stripped)`，内部路由 id 或显示名都可命中（显示名走 `wbResolveByNameIn`，[workbuddy_client.go](internal/app/workbuddy_client.go#L626)）
 4. 返回 `""` → 交给 cline/zen 判定
 
 `providerStripPrefix(id)`（[provider_chat.go](internal/app/provider_chat.go#L511)）得到发给上游的模型名。
@@ -268,32 +269,56 @@ sigInput = payloadB64 \n cosyKey \n ts \n body \n sigPath
 
 **账号**：`data/.qoder-accounts.json`（[qoder.go](internal/app/qoder.go#L155)），字段 `PAT / Region / MachineID / UserID / Email`。删除账号 `qoderDeleteAccount`（[qoder.go](internal/app/qoder.go#L811)）在 `qoderAccMu.Lock()` 临界区内只调无锁的 `qoderLoadAccountsLocked()`，**不要在持锁临界区内调 `qoderLoadAccounts()`** —— 后者会再次加同一把不可重入的锁，直接死锁，曾挂起全部 `/admin` 请求。
 
-## 9.1 Trae（trae.go）
+## 9.1 Trae（trae.go / trae_local.go）
 
-新增的第五家上游，默认 **CN 区**。实现对照 `dsh-multi-router` v0.6.11 的 `TraeSoloUpstreamClient` / `buildTraeHeaders`。
+第六家上游，默认 **CN 区**。实现对照 `dsh-multi-router` v0.6.11 的 `TraeSoloUpstreamClient` / `buildTraeHeaders`。
 
-**凭据来源（与 Qoder 同类，不是 WorkBuddy 那种自动导入）**：Trae 桌面端把登录态写进**加密的 TinyStorage**（Aha/icube），无法像 WorkBuddy 那样用 Electron 原生模块解密，也不像 Qoder 有可粘贴的 PAT。因此走**手动粘贴凭据 JSON**（`accessToken` + `deviceId` 必填，`refreshToken` 用于自动续期），后台 `/admin/` → Trae 账号管理。账号落 `data/.trae-accounts.json`。
+**凭据来源（本机自动解密导入 + 手动 JSON 兜底）**：Trae 桌面端把登录态写进 Electron 的 `User/globalStorage/storage.json`（键 `iCubeAuthInfo://icube.cloudide`），值是一段 base64 密文。**它的加密是完全静态的** —— 四个硬编码盐值写在客户端里，不掺机器指纹或系统密钥，所以任何进程照抄算法就能解开，**不需要调用 Electron 原生模块，也不需要用户从 F12 手抄 token**（2026-10-19 实测推翻了此前「读不了」的判断）。
 
-**网关**（`traeRegionGateways`）：
+密文布局与派生见 [trae_local.go](internal/app/trae_local.go) 文件头：
 
-| 区域 | chat | models | pay |
-|------|------|--------|-----|
-| cn | `https://trae-api-cn.mchost.gury` | `https://solo.trae.cn` | `https://api.trae.cn` |
-| global | `https://coresg-normal.trae.ai` | 同左 | `https://growsg-normal.trae.ai` |
+```
+[6 字节头][32 字节随机串][密文]
+头 74 63 05 10 00 00 (ASCII "tc" + 版本 5) -> salt = SALT_A ^ SALT_B
+头 12 39 20 20 02 03              -> salt = SALT_C ^ SALT_D (aes-private)
+密钥派生: first = sha512(random); derived = sha512(first || salt)
+          AES-128-CBC, key = derived[0:16], iv = derived[16:32]
+明文布局: [64 字节 sha512 摘要][真正的 JSON], 用摘要校验完整性
+```
 
-**端点**：chat `POST /api/agent/v3/llm_utils_chat`（SSE）；目录 `POST /api/ide/v1/get_detail_param`；签到 `POST /trae/api/v2/ug/checkin_credits/{status,claim}`；用量 `POST /trae/api/v2/pay/web_user_ent_usage`；刷新 `POST <pay>/trae/api/v3/oauth/ExchangeToken`（头带 `X-Refresh-Token`）。
+**设备密钥对必须一起导入**：同一份 storage.json 里还有 `iCubeAuthInfo://icube-dc:<deviceId>`，用同一套编解码存着本机 ECDSA P-256 设备密钥对。新版刷新接口 `/trae/api/v3/oauth/ExchangeToken` 强制要它签 DeviceProof（不签回 `20405 Device proof required`，用别的 key 签回 `20403`）——**能证明这台设备是自己人的那把私钥，就躺在它保护的登录信息旁边**，所以导入时必须一并读出（`traeDeviceKeyPair`），否则刷新永远失败。
+
+**导入路径**（[trae_local.go](internal/app/trae_local.go)）：`traeScanLocal` 扫 `%APPDATA%\{Trae CN,trae-cn}\User\globalStorage\storage.json` → `traeDecryptStorageValue` 解密 → `traeParseAuthValue` 还原 JSON → `traeIdentityFromStorage` 取机器号/设备号/版本；另有 `traeParseCliToken` 读 Trae CLI 的裸 JWT 文件（`trae-jwt-token`，无加密，无 storage.json 时机器/设备号由 userId 派生）。后台入口 `/admin/` → Trae 账号管理 →「从本机导入」（`POST /admin/api/providers/trae/import`）；**兜底**才是粘贴凭据 JSON（`accessToken` + `deviceId` 必填，`refreshToken` 用于自动续期），走 `/admin/api/providers/trae/accounts/add`。账号落 `data/.trae-accounts.json`（0600）。
+
+**去重口径是 `(edition, userId)` 而不是 `accessToken`** —— 令牌每次刷新都会变，按令牌去重会在每次「从本机导入」时复制出一个新账号（`traeAddAccount`）。
+
+**网关**（`traeRegionGateways`，逐字对照 dsh `region.ts`，域名拼错会拿到 CDN 的 HTML 反爬页而不是 JSON）：
+
+| 区域 | remote | chat | pay |
+|------|--------|------|-----|
+| cn | `https://solo.trae.cn` | `https://trae-api-cn.mchost.guru` | `https://api.trae.cn` |
+| global | `https://coresg-normal.trae.ai` | `https://coresg-normal.trae.ai` | `https://growsg-normal.trae.ai` |
+
+> **三个网关不可混用**：remote 花名册挂在 `solo.trae.cn`，`get_detail_param` 挂在 **chat** 网关（拿 solo.trae.cn 问它会拿到一段 `<!doctype html>`），签到/用量挂在 **pay** 网关（`api.trae.cn`）。
+
+**端点**：chat `POST /api/agent/v3/llm_utils_chat`（SSE）；花名册 `GET /api/remote/v1/models?functions=<逗号分隔>`（remote 网关）；wire 目录 `POST /api/ide/v1/get_detail_param`（chat 网关）；签到 `POST /trae/api/v2/ug/checkin_credits/{status,claim}`（pay 网关）；用量 `POST /trae/api/v2/pay/web_user_ent_usage`（pay 网关）；刷新 `POST <凭据自带 host>/trae/api/v3/oauth/ExchangeToken`（旧接口兜底 `/cloudide/api/v3/trae/oauth/ExchangeToken`）。
 
 **请求头**（`traeChatHeaders`）：`Authorization: Cloud-IDE-JWT <token>` + `X-Ide-Token` + `x-plugin-channel: icube-ai` + `x-app-id` + `x-machine-id` / `x-device-id` / `x-app-version-code`。注意 **`x-app-version-code` 必须是纯数字**，带点的版本串（`2.3.1`）会被上游拒，`normalizeTraeVersionCode` 取前导数字段。
 
-**模型目录**：`get_detail_param` 一次只返回一个 `function` 下的模型，必须遍历 `traeDirectoryFunctions`（`solo_work_remote` / `solo_agent` / `solo_agent_remote` / `chat_v3` / `solo_coder` / `builder_v3`）合并去重 —— 漏问会少模型（如某些模型只在 `solo_work_remote` 下）。
+**模型目录有两套，职责不同**：
+
+- **花名册（唯一权威来源）**：`traeFetchRemoteModels`（[trae.go](internal/app/trae.go#L782)）打 remote 网关的 `/api/remote/v1/models`，**必须带 `?functions=` 参数**（不带只回一个分组，2026-10-19 实测只回 `solo_coder` 12 个模型），并集取 `traeRemoteDirectoryFunctions`（7 项，含 `solo_agent` / `builder_v3` 等只是「目录分组」的名字）。**只收 remote 目录里的模型，永不把 `get_detail_param` 的行当花名册来源** —— 否则用户自配的自定义模型（`config_source=3`，其中 4 个 `base_url` 指回本服务 `127.0.0.1:9999`）和 `fast_apply` 这类非聊天工具模型会混进来，选中即无限自调用。
+- **wire 目录**：`get_detail_param` 一次只返回一个 `function` 下的模型行（`WireID` / `WireFunction`），必须按 `traeDirectoryFunctions`（`solo_work_remote` / `solo_work_lite` / `solo_agent_remote` / `chat_v3` / `solo_coder`）**顺序**逐个问，顺序即优先级。**这层名单不能想当然**：`solo_agent` 与 `builder_v3` 能答目录却拒绝聊天（dsh 实测：用 `solo_agent` 发任何模型都回 `4011`），让它们抢先会把一半模型标成不可调用；`solo_work_lite` 是**能聊天**的那个默认函数（`traeSoloFunction`）。
 
 **免费判定要看键在不在，不能看值**：上游的 `credit_multiplier` 可能整个缺失，而缺失时反序列化出来的值也是 `0`。若按 `multiplier == 0` 判免费，就会把「上游没标价」当成「免费」，与 WorkBuddy `hunyuan` 那个坑同源。因此 `traeModelInfo` 单独记了 `Priced bool`（解析时 `credit_multiplier` 键存在才置 true），`providerModelList` / `traeResolveDecorated` / 前端 `fetchProviderModels` 三处都按 `Priced && mult == 0` 判免费。
 
-**令牌续期**：`traePrepareChat` 在令牌已过期或 5 分钟内到期时先主动换一次；撞到 401 时 `traeCallChat` 换一次再重试。**不要在 401 分支里递归调用自己** —— 递归结果会被丢弃，白跑一次请求还会盖掉真实错误（初版就是这么写的，已改为「换令牌 → 清 lastErr → 交给下一轮循环重试」）。
+**令牌续期**：`traePrepareChat` 在令牌已过期或 5 分钟内到期时先主动换一次；撞到 401 时 `traeCallChat` 换一次再重试。**不要在 401 分支里递归调用自己** —— 递归结果会被丢弃，白跑一次请求还会盖掉真实错误（初版就是这么写的，已改为「换令牌 → 清 lastErr → 交给下一轮循环重试」）。刷新要挂在**凭据自己声明的 host** 下（`traeExchangeHost`），不能写死网关；ClientID 按 edition 分叉（桌面端 `ono9krqynydwx5` / SOLO `en1oxy7wnw8j9n`），用错会回 `10101`。
 
-**配置**：`data/.trae-config.json`，结构 `traeProviderConfig{Enabled, Proxies, FreeOnly, MaxRetries}`。后台路由：`/admin/api/providers/trae/{config,accounts/add,accounts/delete,models/refresh,checkin}`。
+**上游业务码**（`traeErrorCodeHint`）：`4011` 是**限流**不是「这条路由不服务这个模型」（后者是 `4001`），早先读反了导致限流被当成永久失败、真正的路由错配反而被当限流去重试；`1005` 是订阅档位门槛，只在 `extra.plan` 里体现，message 是空的；`2001` = 请求缺 function；`3003` = 上游冷加载。
 
-> **未真机联调**：端点与请求头形态均照 `dsh-multi-router` 源码实现，本机没有真实 Trae 账号做过调用验证。首次使用如报字段/路径不对，以服务端日志里的上游原始响应为准微调（`traeSSEExtract` 目前按 OpenAI 兼容流透传，若上游是别的信封需据日志改）。
+**配置**：`data/.trae-config.json`，结构 `traeProviderConfig{Enabled, Proxies, FreeOnly, MaxRetries}`，默认 `{Enabled:true, MaxRetries:2}`。**`Proxies` 字段当前只是占位** —— trae.go 里没有任何代理使用点，后台也没有代理输入框，后台 patch 只处理 `Enabled` / `FreeOnly` / `MaxRetries`。`FreeOnly` 切换后必须调 `/admin/api/providers/trae/models/refresh` 重新同步。后台路由：`/admin/api/providers/trae/{config,import,accounts/add,accounts/delete,models/refresh,checkin}`。
+
+> **已实测**：2026-10-01 与 2026-10-12 两次拿真实账号、22 function × 6 model 矩阵实测过，错误码语义与上述一致。若日后上游改字段，以服务端日志里的上游原始响应为准微调（`traeSSEExtract` 目前按 OpenAI 兼容流透传，若上游改成别的信封需据日志改）。
 
 ## 10. provider SSE 中继与错误信封（provider_sse.go）
 
@@ -301,7 +326,7 @@ sigInput = payloadB64 \n cosyKey \n ts \n body \n sigPath
 |------|------|------|
 | `relayProviderSSE` | [provider_sse.go](internal/app/provider_sse.go#L37) | 流式透传：逐帧提取后按客户端协议重写；每帧先处理再判断 break（先 break 会丢掉无结尾换行的整行） |
 | `aggregateProviderSSE` | [provider_sse.go](internal/app/provider_sse.go#L98) | 非流式聚合，空帧兜底解析原文；签名 `(map[string]any, error)` |
-| `wbSSEExtract` / `qoderSSEExtract` | [provider_sse.go](internal/app/provider_sse.go#L286) / [#L297](internal/app/provider_sse.go#L297) | 两家的帧解析器 |
+| `wbSSEExtract` / `qoderSSEExtract` | [provider_sse.go](internal/app/provider_sse.go#L319) / [#L330](internal/app/provider_sse.go#L330) | 两家的帧解析器（Trae 的在 [trae.go](internal/app/trae.go#L1650) `traeSSEExtract`） |
 | `innerErrorChunk` | [provider_sse.go](internal/app/provider_sse.go#L328) | 解内层错误信封（Qoder 的 `insufficient_quota` "All models failed" 曾被吞成空回答）；含 `choices` 直接短路返回 nil |
 | `synthErrorChunk` | [provider_sse.go](internal/app/provider_sse.go#L363) | 造标准 error 帧（截断 500 字符） |
 | `chatStreamToResponsesExtract` | [provider_sse.go](internal/app/provider_sse.go#L387) | provider 流 → Responses API 事件（`output_text.delta` / `reasoning_summary_text.delta` / `function_call`） |
@@ -312,7 +337,7 @@ sigInput = payloadB64 \n cosyKey \n ts \n body \n sigPath
 
 **localhostGuard**（[admin.go](internal/app/admin.go#L51)）：所有 `/admin/` 路由挂到子 mux 后整体套该中间件（[admin.go](internal/app/admin.go#L118)），仅允许 `r.RemoteAddr` 为本机回环的请求，其余 403；**不信任 X-Forwarded-For**（可伪造）。判断基于 TCP 对端地址。
 
-Tab 页（[admin_html.go](internal/app/admin_html.go#L209-L219)）：仪表盘 / 模型列表 / Cline账号管理 / 导入Cline账号 / Cline设置 / 请求日志 / opencode 免费模型 / WorkBuddy账号管理 / WorkBuddy国际版 / Qoder账号管理 / 模型聊天。
+Tab 页（[admin_html.go](internal/app/admin_html.go#L229-L238)）：仪表盘 / 全部模型 / Cline 账号 / opencode 免费模型 / WorkBuddy账号管理 / WorkBuddy国际版 / Qoder账号管理 / **Trae账号管理** / 模型聊天 / 请求日志。
 
 > **模型列表页是表格视图**，8 列：模型（可读名 + 裸路由 id 副行）/ 分组 / 费率 / 上下文 / 图片 / 视频 / 状态 / 操作，顶部带搜索、分组筛选、仅看免费、仅看支持图片、仅看可用，表头可点击排序。
 >
@@ -352,20 +377,22 @@ Tab 页（[admin_html.go](internal/app/admin_html.go#L209-L219)）：仪表盘 /
 | /models/probe-modality | POST | 模态实调探测（图片），结果缓存 7 天 |
 | /config · /config/update | GET/POST | 策略 / 默认模型 / 伪装头 |
 | /opencode/config · /opencode/models · /opencode/stats（+ /refresh） | GET/POST | zen 配置 / 模型 / 统计（`/zen/*` 为别名） |
-| /providers/status | GET | 三 provider 状态（enabled / 账号 / 模型数 / 配置） |
-| /providers/models | GET | 三 provider 全部模型（**顶层键是 provider 名**，不是 models 数组） |
+| /providers/status | GET | 四个 provider 状态（enabled / 账号 / 模型数 / 配置） |
+| /providers/models | GET | 四个 provider 全部模型（**顶层键是 provider 名**，不是 models 数组） |
 | /providers/credits | GET | 积分余额 / 签到状态 / 配额 |
-| /providers/{workbuddy,workbuddy-ai,qoder}/config | POST | 改 provider 配置 |
+| /providers/{workbuddy,workbuddy-ai,qoder,trae}/config | POST | 改 provider 配置 |
 | /providers/workbuddy/import | POST | 从本机重新导入 WorkBuddy 凭据 |
+| /providers/trae/import | POST | 从本机 Trae 桌面端解密导入凭据（含设备密钥对） |
 | /providers/workbuddy/refresh | POST | 刷新 WorkBuddy token |
-| /providers/{workbuddy,workbuddy-ai,qoder}/models/refresh | POST | 重同步模型目录 |
+| /providers/{workbuddy,workbuddy-ai,qoder,trae}/models/refresh | POST | 重同步模型目录 |
 | /providers/qoder/accounts/add · delete | POST | Qoder PAT 账号管理 |
-| /providers/{workbuddy,workbuddy-ai,qoder}/checkin | POST | 一键签到领积分 |
+| /providers/trae/accounts/add · delete | POST | Trae 账号管理（add 为手动凭据 JSON 兜底） |
+| /providers/{workbuddy,workbuddy-ai,qoder,trae}/checkin | POST | 一键签到领积分 |
 | /providers/{workbuddy,workbuddy-ai}/probe | POST | 模型可用性探测 |
 
-注册位置：[admin.go](internal/app/admin.go#L78-L113)（核心）+ [admin_providers.go](internal/app/admin_providers.go#L499) `registerProviderRoutes`（三 provider 18 条）。
+注册位置：[admin.go](internal/app/admin.go#L78-L113)（核心）+ [admin_providers.go](internal/app/admin_providers.go#L499) `registerProviderRoutes`（四 provider 24 条）。
 
-**启动初始化** `startProviderBoot()`（[admin_providers.go](internal/app/admin_providers.go#L521)）：无 WB 账号时 `wbReadLocalAccounts()` 自动导入本机凭据；3 秒后异步 `wbSyncModels()` 与（若有 qoder 账号）`qoderSyncModels()`。
+**启动初始化** `startProviderBoot()`（[admin_providers.go](internal/app/admin_providers.go#L521)）：无 WB 账号时 `wbReadLocalAccounts()` 自动导入本机凭据；3 秒后异步 `wbSyncModels()`、`qoderSyncModels()`（有 qoder 账号时）与 `traeSyncModelsSafe()`（有 trae 账号时）。
 
 ## 12. 三协议转换
 
@@ -375,9 +402,9 @@ Tab 页（[admin_html.go](internal/app/admin_html.go#L209-L219)）：仪表盘 /
 | Anthropic /v1/messages | [proxy.go](internal/app/proxy.go#L297) | `anthropicToOpenAI`（[proxy.go](internal/app/proxy.go#L1073)）/ `openAIToAnthropic`（[proxy.go](internal/app/proxy.go#L1326)）/ `handleAnthropicStreamWithUsage`（[proxy.go](internal/app/proxy.go#L1654)）；工具参数按 schema 裁剪（`filterToolInput`，[proxy.go](internal/app/proxy.go#L1287)）；provider 侧 [proxy.go](internal/app/proxy.go#L1482) 调 `handleProviderAnthropicMessage`（[provider_chat.go](internal/app/provider_chat.go#L172)） |
 | OpenAI Responses /v1/responses | [responses.go](internal/app/responses.go) | `responsesToChat`（[responses.go](internal/app/responses.go#L20)）/ `chatToResponses`（[responses.go](internal/app/responses.go#L156)）/ `chatStreamToResponses`（[responses.go](internal/app/responses.go#L264)）；provider 侧 [responses.go](internal/app/responses.go#L466) 调 `handleProviderResponses`（[provider_chat.go](internal/app/provider_chat.go#L206)） |
 
-**三协议对五个来源全部生效** —— 派发点靠 `isProviderRoute(route)` 判定，三处入口缺一处就会把请求静默交给 cline 账号池（用 cline 的额度跑另一个上游且不报错）。
+**三协议对六个来源全部生效** —— 派发点靠 `isProviderRoute(route)` 判定，三处入口缺一处就会把请求静默交给 cline 账号池（用 cline 的额度跑另一个上游且不报错）。
 
-**`developer` 角色必须折叠成 `system`**：Responses API 与新版 OpenAI SDK 用 `developer` 承载系统指令，Codex CLI 走 `/v1/responses` 时 `messages[0].role` 就是 `developer`；而 cline / workbuddy / qoder 只认 `system/assistant/user/tool/function`，原样透传直接 400（`'developer' is not one of [...]`）。归一化在 `cleanMessages`（[proxy.go](internal/app/proxy.go#L474)），四个上游构造函数 `buildUpstreamBody` / `buildZenBody` / `wbBuildBody` / `qoderBuildBody` 都会调用它。多条 `system` 合并成开头一条（WorkBuddy 要求首条必须是 system），含多模态内容的 system 不合并以免丢图；函数不改入参 map，重试路径复用同一份 `params`。回归测试 `TestCleanMessages*`（[messages_test.go](internal/app/messages_test.go)）。
+**`developer` 角色必须折叠成 `system`**：Responses API 与新版 OpenAI SDK 用 `developer` 承载系统指令，Codex CLI 走 `/v1/responses` 时 `messages[0].role` 就是 `developer`；而 cline / workbuddy / qoder 只认 `system/assistant/user/tool/function`，原样透传直接 400（`'developer' is not one of [...]`）。归一化在 `cleanMessages`（[proxy.go](internal/app/proxy.go#L474)），上游构造函数 `buildUpstreamBody` / `buildZenBody` / `wbBuildBody` / `qoderBuildBody` 以及 Trae 的 `traeNormalizeMessages` 都会调用它。多条 `system` 合并成开头一条（WorkBuddy 要求首条必须是 system），含多模态内容的 system 不合并以免丢图；函数不改入参 map，重试路径复用同一份 `params`。回归测试 `TestCleanMessages*`（[messages_test.go](internal/app/messages_test.go)）。
 
 **provider 流内错误不再伪装成成功**：`chatStreamToResponsesExtract`（[provider_sse.go](internal/app/provider_sse.go#L387)）收到上游 `error` 帧时发 `response.failed`。此前是 `break` 后照常发 `response.completed`，客户端拿到的是「成功的空回答」，真实原因只留在网关日志里 —— 上面那个 `developer` 400 就是这样被藏了一整天。
 
@@ -412,7 +439,7 @@ Tab 页（[admin_html.go](internal/app/admin_html.go#L209-L219)）：仪表盘 /
 | `.qoder-accounts.json` | Qoder 账号（PAT/Region/MachineID/UserID/Email） |
 | `.qoder-config.json` | Qoder 配置（Enabled/Proxies/FreeOnly/MaxRetries） |
 | `.qoder-machine-id` | Qoder 机器码 |
-| `.trae-accounts.json` | Trae 账号（accessToken/refreshToken/deviceId/userId，0600） |
+| `.trae-accounts.json` | Trae 账号（accessToken/refreshToken/deviceId/userId/设备密钥对，0600） |
 | `.trae-config.json` | Trae 配置（Enabled/Proxies/FreeOnly/MaxRetries） |
 | `.trae-device.json` | Trae 本机 deviceId（首次生成后固定） |
 | `.modality-probe.json` | 模态探测结果缓存（key=`<source>:<baseId>`，TTL 7 天） |
@@ -438,6 +465,7 @@ Tab 页（[admin_html.go](internal/app/admin_html.go#L209-L219)）：仪表盘 /
 | 改 WorkBuddy 变体/凭据 | [workbuddy.go](internal/app/workbuddy.go)（wbVariants/wbAuthDirs/wbAtRestSecret） |
 | 改 WorkBuddy 上游行为 | [workbuddy_client.go](internal/app/workbuddy_client.go) |
 | 改 Qoder 签名/上游行为 | [qoder.go](internal/app/qoder.go)（qoderCosySign/qoderEncodeBody） |
+| 改 Trae 凭据/模型/聊天/签到 | [trae.go](internal/app/trae.go) + [trae_local.go](internal/app/trae_local.go)（本机解密导入、目录、刷新签名） |
 | 改 provider SSE 解析/错误信封 | [provider_sse.go](internal/app/provider_sse.go)（SSEExtract/innerErrorChunk） |
 | 上游不认某个消息角色 | [proxy.go](internal/app/proxy.go#L463) `chatRoleAliases`（加别名）+ `cleanMessages` |
 | 上游回的工具名客户端不认 | [zen.go](internal/app/zen.go#L449) `applyZenToolAliases` + [proxy.go](internal/app/proxy.go#L1355) `resolveClientToolName` |
@@ -463,3 +491,5 @@ Tab 页（[admin_html.go](internal/app/admin_html.go#L209-L219)）：仪表盘 /
 7. **WorkBuddy 登录文件会轮转**：桌面端启动才创建 auth 目录下的 `.info`，`Test-Path` 可能瞬时 false；凭据读取失败时不要立刻判定"未登录"，先用 `dir /s /b /a` 确认文件存在
 8. **Qoder 配额抖动**：上游存在 429 / `insufficient_quota`，同模型重试往往可成功；`FreeOnly` 切换后必须重同步模型目录
 9. **WorkBuddy 有未标价模型**：上游目录缺 `credits` 字段但实测按量扣积分（如 `hunyuan-chat`），`/v1/models` 里不加计费段，`/admin` 显式提示「上游未标价」——标成免费会误导用户
+10. **Trae 有未标价模型**：`credit_multiplier` 键可能整个缺失，缺失时取出来是 0，所以 Trae 单独用 `priced` 标记「上游有没有给价」；`/v1/models` 里不给它加 `· free` 段（详见 §9.1）
+11. **Trae 仅 CN 区**：国际版 / SOLO 的刷新是另一套 ClientID（SOLO `en1oxy7wnw8j9n`、桌面端 `ono9krqynydwx5`），而正式模型目录 `/api/remote/v1/models` 目前返回的正是 SOLO 的花名册，混进来既刷不掉令牌又会列出本机调不了的模型，故 `traeEditions` 目前只有 `cn`

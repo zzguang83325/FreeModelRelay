@@ -1,9 +1,9 @@
 package app
 
 import (
-	"bytes"
 	"FreeModelRelay/internal/cline"
 	"FreeModelRelay/internal/kit"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -112,6 +112,9 @@ func registerAdminRoutes(mux *http.ServeMux) {
 	adminMux.HandleFunc("/admin/api/zen/models", corsHandler(handleZenModels))
 	adminMux.HandleFunc("/admin/api/zen/models/refresh", corsHandler(handleZenModelsRefresh))
 	adminMux.HandleFunc("/admin/api/zen/stats", corsHandler(handleZenStats))
+	// 统一出口代理(手动 > 系统代理 > 环境变量 > 直连)
+	adminMux.HandleFunc("/admin/api/egress-proxy", corsHandler(handleEgressProxyConfig))
+	adminMux.HandleFunc("/admin/api/egress-proxy/update", corsHandler(handleEgressProxyConfigUpdate))
 	adminMux.HandleFunc("/admin/zen/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusFound)
 	})

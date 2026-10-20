@@ -235,7 +235,7 @@ func syncRecommendedModels() (int, error) {
 		req.Header.Set(k, v)
 	}
 
-	client := &http.Client{Timeout: modelsSyncTimeout}
+	client := kit.NewHTTPClient(modelsSyncTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err

@@ -792,7 +792,7 @@ func traeFetchRemoteModels(acc *traeAccount, base string) ([]traeModelInfo, erro
 		req.Header.Set(k, v)
 	}
 	req.Header.Set("Accept", "application/json")
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := kit.NewHTTPClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -876,7 +876,7 @@ func traeFetchDetailRow(acc *traeAccount, base, fn string, firstErr *error) []ma
 		req.Header.Set(k, v)
 	}
 	req.Header.Set("Accept", "application/json")
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := kit.NewHTTPClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		if firstErr != nil && *firstErr == nil {
@@ -1356,7 +1356,7 @@ func traeCallChat(params map[string]any, m traeModelInfo, a *traeAccount) (*http
 			req.Header.Set(k, v)
 		}
 		req.Header.Set("Accept", "text/event-stream")
-		client := &http.Client{Timeout: 10 * time.Minute}
+		client := kit.NewHTTPClient(10 * time.Minute)
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
@@ -1488,7 +1488,7 @@ func traePostExchange(url string, body map[string]any, label string) (accessToke
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := kit.NewHTTPClient(30 * time.Second)
 	resp, derr := client.Do(req)
 	if derr != nil {
 		err = derr
@@ -1827,7 +1827,7 @@ func traeCheckinStatus(a *traeAccount) (map[string]any, error) {
 	for k, v := range traeUsageHeaders(a) {
 		req.Header.Set(k, v)
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := kit.NewHTTPClient(20 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -1870,7 +1870,7 @@ func traeRunCheckin(a *traeAccount) (checkinResult, error) {
 	for k, v := range traeUsageHeaders(a) {
 		req.Header.Set(k, v)
 	}
-	client := &http.Client{Timeout: 25 * time.Second}
+	client := kit.NewHTTPClient(25 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return checkinResult{}, err
@@ -2027,7 +2027,7 @@ func traeFetchUsage(a *traeAccount) (map[string]any, error) {
 	for k, v := range traeUsageHeaders(a) {
 		req.Header.Set(k, v)
 	}
-	client := &http.Client{Timeout: 25 * time.Second}
+	client := kit.NewHTTPClient(25 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

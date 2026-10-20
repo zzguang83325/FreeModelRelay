@@ -92,7 +92,7 @@ func wbProbeOne(v *wbVariant, a *wbAccount, modelID string) wbProbeEntry {
 			return entry
 		}
 		wbChatHeaders(req, a, v, "")
-		client := &http.Client{Timeout: 30 * time.Second}
+		client := kit.NewHTTPClient(30 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			entry.Note = err.Error()

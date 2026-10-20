@@ -54,6 +54,9 @@ func StartProxy(host string, port int) error {
 	}
 	initLogFile()
 
+	// 出口代理配置要在任何网络请求之前加载, 保证账号预热、模型同步都走正确出口
+	loadEgressProxyConfig()
+
 	p := loadPool()
 	activeCount := 0
 	for _, a := range p.Accounts {
