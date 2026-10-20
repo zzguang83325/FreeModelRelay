@@ -696,7 +696,14 @@ func startProviderBoot() {
 				log.Printf("  provider: qoder %d models ready", n)
 			}
 		}
-		if len(loomyLoadAccounts()) > 0 {
+		if len(loomyLoadAccounts()) > 0 || len(loomyReadLocalSessions()) > 0 {
+			// 本机装了 Loomy 客户端(或有已导入账号)才动 loomy: 自动导入/跟随
+			// 客户端登录态, 再同步模型目录
+			if imp, upd, note := loomySyncLocalSessions(); imp > 0 || upd > 0 {
+				log.Printf("  provider: loomy local sync +%d imported, %d updated (%s)", imp, upd, note)
+			} else if note != "" {
+				log.Printf("  provider: loomy local: %s", note)
+			}
 			if n, err := loomySyncModels(); err != nil {
 				log.Printf("  provider: loomy models sync failed: %v", err)
 			} else {

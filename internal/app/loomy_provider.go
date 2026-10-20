@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -850,6 +851,11 @@ func loomySessionKeeper() {
 		if round > 0 {
 			time.Sleep(6 * time.Hour)
 		}
+		// 每轮先跟随本机客户端: 客户端重新登录后 auth-session.json 原地更新,
+		// 失效的 session-only 账号自动换成新 session
+		if imp, upd, note := loomySyncLocalSessions(); imp > 0 || upd > 0 {
+			log.Printf("  loomy keeper: local sync +%d imported, %d updated (%s)", imp, upd, note)
+		}
 		for _, a := range loomyLoadAccounts() {
 			if !a.Enabled {
 				continue
@@ -1032,6 +1038,148 @@ func identityDevid(id *loomy.Identity) string {
 		return ""
 	}
 	return id.Devid
+}
+
+// ============ 本机客户端导入 ============
+
+// loomyLocalSession 官方客户端落盘的登录态文件(userData/auth-session.json):
+// session 明文 + userid + 脱敏手机号。客户端重新登录后文件原地更新。
+type loomyLocalSession struct {
+	Session   string `json:"session"`
+	UserID    string `json:"userid"`
+	Phone     string `json:"phone"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
+// loomyLocalSessionGlobs 客户端数据目录。Windows 是 C:\Users\Public\Loomy\<sha256(user)[:12]>\userData\,
+// macOS 按 Electron 惯例在 ~/Library/Application Support/Loomy/ 下。
+func loomyLocalSessionGlobs() []string {
+	globs := []string{
+		filepath.Join("C:", "Users", "Public", "Loomy", "*", "userData", "auth-session.json"),
+	}
+	if public := os.Getenv("PUBLIC"); public != "" {
+		globs = append(globs, filepath.Join(public, "Loomy", "*", "userData", "auth-session.json"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		globs = append(globs, filepath.Join(home, "Library", "Application Support", "Loomy", "*", "userData", "auth-session.json"))
+	}
+	return globs
+}
+
+func loomyReadLocalSessions() []loomyLocalSession {
+	var out []loomyLocalSession
+	seen := map[string]bool{}
+	for _, pattern := range loomyLocalSessionGlobs() {
+		files, _ := filepath.Glob(pattern)
+		for _, f := range files {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				continue
+			}
+			var ls loomyLocalSession
+			if json.Unmarshal(data, &ls) != nil || ls.Session == "" || seen[ls.Session] {
+				continue
+			}
+			seen[ls.Session] = true
+			out = append(out, ls)
+		}
+	}
+	return out
+}
+
+// loomyLocalSyncMu boot 与 keeper 可能并发跑本机同步, 互斥避免同一 session
+// 双导入(dup 检查与 append 之间有窗口)。
+var loomyLocalSyncMu sync.Mutex
+
+// loomySyncLocalSessions 检测本机 Loomy 客户端登录态并同步进账号池:
+//   - 全新 session → 导入为新账号(session-only, 带客户端给的 userid/手机号)
+//   - 已入库的 session-only 账号失效且客户端重新登录过(同 userid) → 跟随更新
+//   - 已存在相同 session → 跳过
+//
+// 每个候选 session 先打一次点数接口验证有效性, 过期登录态不入库。
+// 返回 (导入数, 跟随更新数, 说明)。
+func loomySyncLocalSessions() (int, int, string) {
+	sessions := loomyReadLocalSessions()
+	if len(sessions) == 0 {
+		return 0, 0, "本机未检测到 Loomy 客户端登录态"
+	}
+	loomyLocalSyncMu.Lock()
+	defer loomyLocalSyncMu.Unlock()
+	imported, updated, skipped := 0, 0, 0
+	var notes []string
+	validator := loomy.NewClient(kit.HTTPClient)
+	for _, ls := range sessions {
+		// 客户端自己维护的登录态一般是活的, 但也可能过期闲置 —— 先验证再入库
+		if _, err := validator.FetchPoints(ls.Session); err != nil {
+			notes = append(notes, fmt.Sprintf("%s 的 session 已失效", loomyMaskPhone(ls.Phone)))
+			continue
+		}
+		accounts := loomyLoadAccounts()
+		dup := false
+		for _, a := range accounts {
+			if a.Session == ls.Session {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			skipped++
+			continue
+		}
+		// 同 userid 的失效 session-only 账号 → 跟随客户端重新登录
+		if ls.UserID != "" {
+			matched := false
+			for _, a := range accounts {
+				if a.UserID == ls.UserID && a.Password == "" && a.Session != ls.Session {
+					a.Session = ls.Session
+					a.lastError = ""
+					loomySaveAccounts()
+					loomyRefreshPoints(a)
+					updated++
+					matched = true
+					notes = append(notes, fmt.Sprintf("%s 的 session 已跟随客户端更新", a.displayName()))
+					break
+				}
+			}
+			if matched {
+				continue
+			}
+		}
+		acc := &loomyAccount{
+			ID:       "loomy_" + randHex(6),
+			Name:     loomyLocalAccountName(ls),
+			LoginID:  ls.Phone,
+			UserID:   ls.UserID,
+			Session:  ls.Session,
+			Identity: loomy.NewIdentity(),
+			Enabled:  true,
+		}
+		loomyAccMu.Lock()
+		loomyAccounts = append(loomyAccounts, acc)
+		loomyAccMu.Unlock()
+		loomySaveAccounts()
+		loomyRefreshPoints(acc)
+		imported++
+		notes = append(notes, fmt.Sprintf("已导入 %s (可用点数 %.0f)", acc.displayName(), acc.available))
+	}
+	if skipped > 0 && imported == 0 && updated == 0 {
+		notes = append(notes, fmt.Sprintf("%d 个本机 session 已在账号池", skipped))
+	}
+	return imported, updated, strings.Join(notes, "; ")
+}
+
+func loomyLocalAccountName(ls loomyLocalSession) string {
+	if ls.Phone != "" {
+		return "本机 " + ls.Phone
+	}
+	return "本机 Loomy 客户端"
+}
+
+func loomyMaskPhone(p string) string {
+	if p == "" {
+		return "未知账号"
+	}
+	return p
 }
 
 // ============ 后台 API handlers ============
