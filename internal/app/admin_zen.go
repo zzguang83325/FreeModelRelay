@@ -54,16 +54,16 @@ func handleZenConfigUpdate(w http.ResponseWriter, r *http.Request) {
 
 	cur := getZenConfig()
 	var patch struct {
-		Enabled         *bool    `json:"enabled"`
-		Key             *string  `json:"key"`
-		BaseURL         *string  `json:"baseURL"`
-		Proxies         []string `json:"proxies"`
-		ProxyStrategy   *string  `json:"proxyStrategy"`
-		MaxConcurrency  *int     `json:"maxConcurrency"`
-		Retries         *int     `json:"retries"`
-		Failover        *bool    `json:"failover"`
-		FailoverCount   *int     `json:"failoverCount"`
-		FailoverMinutes *int     `json:"failoverMinutes"`
+		Enabled         *bool     `json:"enabled"`
+		Key             *string   `json:"key"`
+		BaseURL         *string   `json:"baseURL"`
+		Proxies         *[]string `json:"proxies"`
+		ProxyStrategy   *string   `json:"proxyStrategy"`
+		MaxConcurrency  *int      `json:"maxConcurrency"`
+		Retries         *int      `json:"retries"`
+		Failover        *bool     `json:"failover"`
+		FailoverCount   *int      `json:"failoverCount"`
+		FailoverMinutes *int      `json:"failoverMinutes"`
 		Compaction      *struct {
 			Auto         *bool   `json:"auto"`
 			Buffer       *int    `json:"buffer"`
@@ -108,11 +108,11 @@ func handleZenConfigUpdate(w http.ResponseWriter, r *http.Request) {
 		next.BaseURL = strings.TrimRight(*patch.BaseURL, "/")
 	}
 	if patch.Proxies != nil {
-		if err := validateProxyList(patch.Proxies); err != nil {
+		if err := validateProxyList(*patch.Proxies); err != nil {
 			writeAPI(w, http.StatusBadRequest, apiResponse{Error: err.Error()})
 			return
 		}
-		next.Proxies = patch.Proxies
+		next.Proxies = *patch.Proxies
 	}
 	if patch.ProxyStrategy != nil && *patch.ProxyStrategy != "" {
 		next.ProxyStrategy = *patch.ProxyStrategy
@@ -237,6 +237,11 @@ func handleZenModelsRefresh(w http.ResponseWriter, r *http.Request) {
 		msg += fmt.Sprintf("; catalog %d free models", len(catalogSnapshot()))
 	}
 	writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: msg})
+}
+
+// GET /admin/api/opencode/proxy-usage — zen 出口使用记录(最新在前)
+func handleZenProxyUsage(w http.ResponseWriter, r *http.Request) {
+	writeAPI(w, http.StatusOK, apiResponse{Success: true, Data: zenUsageSnapshot()})
 }
 
 // GET /admin/api/zen/stats

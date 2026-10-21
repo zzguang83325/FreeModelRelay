@@ -338,7 +338,23 @@ func getDefaultModel() string {
 	initModelsCache()
 	// 管理页保存的默认模型可能是 /v1/models 里的展示 id(带分组前缀与计费段),
 	// 先归一成真实模型 id 再判定, 否则会被当成未知模型而静默回退到别的上游。
-	dm := providerNormalizeDisplayID(getDefaultModelValue())
+	raw := strings.TrimSpace(getDefaultModelValue())
+	dmDisp := providerStripDecorate(raw)
+	dm := providerNormalizeDisplayID(raw)
+	// 带 <provider>/ 显式前缀的形态优先判定: 同名模型(如 loomy 与 trae 都有
+	// DeepSeek-V4.1-Flash)必须靠前缀区分归属, 剥掉前缀后裸名兜底会按
+	// wb→qoder→trae→loomy 顺序命中错误的上游。
+	if dmDisp != dm && dmDisp != "" {
+		if _, ok := modelsCache[dmDisp]; ok {
+			return dmDisp
+		}
+		if _, isZen := resolveZenFreeModel(dmDisp); isZen {
+			return dmDisp
+		}
+		if providerRoute(dmDisp) != "" {
+			return dmDisp
+		}
+	}
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
 
@@ -377,6 +393,14 @@ func normalizeRequestModel(id string) string {
 	if id == "" {
 		return getDefaultModel()
 	}
+	// 客户端可能把 /v1/models 里的展示 id 原样发回来。带 <provider>/ 显式前缀的
+	// 形态原样保留 —— 同名模型(如 loomy 与 trae 都有 DeepSeek-V4.1-Flash)剥掉
+	// 前缀后会被裸名兜底路由到错误的上游。
+	if strings.Contains(id, "/") && !strings.HasPrefix(id, "opencode/") {
+		if providerRoute(id) != "" {
+			return id
+		}
+	}
 	// 客户端可能把 /v1/models 里的展示 id(带分组前缀与 " · free" 计费段)原样发回来,
 	// 归一成真实模型 id 后才能命中缓存, 否则会被误判为未知模型而回退默认模型。
 	id = providerNormalizeDisplayID(id)
@@ -396,6 +420,14 @@ func normalizeRequestModel(id string) string {
 
 // isKnownModel 模型是否可识别: 账号池模型表 或 zen 免费模型 或第三方 provider
 func isKnownModel(id string) bool {
+	id = strings.TrimSpace(id)
+	// 显式 <provider>/ 前缀形态: 直接按前缀路由判定(同名模型必须靠前缀区分归属,
+	// 剥成裸名会被别的 provider 按兜底顺序抢走)
+	if i := strings.Index(id, "/"); i > 0 && !strings.HasPrefix(id, "opencode/") {
+		if providerRoute(id) != "" {
+			return true
+		}
+	}
 	id = providerNormalizeDisplayID(id)
 	initModelsCache()
 	modelsMu.Lock()

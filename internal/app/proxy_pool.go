@@ -27,47 +27,57 @@ var (
 	zenProxyCount  atomic.Uint64
 	zenTransportMu sync.Mutex
 
-	zenProxyCooldowns   = map[int]time.Time{} // 代理索引 -> 冷却截止
+	// 冷却按代理 URL 记账(而非列表索引): 订阅节点随刷新/健康检测进出出口池,
+	// 索引会错位, URL 是稳定键。
+	zenProxyCooldowns   = map[string]time.Time{} // 代理URL -> 冷却截止
 	zenProxyCooldownsMu sync.Mutex
 )
 
 // cooldownZenProxy 标记某出口代理冷却,冷却期内轮询跳过
-func cooldownZenProxy(idx int, d time.Duration) {
-	if idx < 0 {
+func cooldownZenProxy(purl string, d time.Duration) {
+	if purl == "" {
 		return
 	}
 	if d <= 0 {
 		d = 10 * time.Minute
 	}
 	zenProxyCooldownsMu.Lock()
-	zenProxyCooldowns[idx] = time.Now().Add(d)
+	zenProxyCooldowns[purl] = time.Now().Add(d)
 	zenProxyCooldownsMu.Unlock()
 }
 
-func zenProxyAvailable(idx int) bool {
+// clearZenProxyCooldown 清除某代理的冷却(封禁/解封后避免残留展示)
+func clearZenProxyCooldown(purl string) {
+	if purl == "" {
+		return
+	}
+	zenProxyCooldownsMu.Lock()
+	delete(zenProxyCooldowns, purl)
+	zenProxyCooldownsMu.Unlock()
+}
+
+func zenProxyAvailable(purl string) bool {
 	zenProxyCooldownsMu.Lock()
 	defer zenProxyCooldownsMu.Unlock()
-	until, ok := zenProxyCooldowns[idx]
+	until, ok := zenProxyCooldowns[purl]
 	if !ok {
 		return true
 	}
 	if time.Now().After(until) {
-		delete(zenProxyCooldowns, idx)
+		delete(zenProxyCooldowns, purl)
 		return true
 	}
 	return false
 }
 
+// zenProxyCooldownStatus 冷却中的出口(代理URL -> 冷却截止时刻)
 func zenProxyCooldownStatus() map[string]string {
-	proxies := effectiveZenProxies()
 	zenProxyCooldownsMu.Lock()
 	defer zenProxyCooldownsMu.Unlock()
 	out := map[string]string{}
-	for idx, until := range zenProxyCooldowns {
-		if idx >= 0 && idx < len(proxies) {
-			if time.Now().Before(until) {
-				out[proxies[idx]] = until.Format("15:04:05")
-			}
+	for u, until := range zenProxyCooldowns {
+		if time.Now().Before(until) {
+			out[u] = until.Format("15:04:05")
 		}
 	}
 	return out
@@ -99,6 +109,27 @@ func effectiveZenProxies() []string {
 	return append(out, subs...)
 }
 
+// zenStickyProxy 粘性出口记忆(sticky 策略): 最近一次成功请求实际使用的代理 URL。
+// 目的: 免费额度按出口 IP 记账, 一个节点能用就应该一直用, 而不是每次轮询
+// 换节点反复撞其他节点的限流。节点失败进入冷却后自动切换, 冷却结束自动回归。
+var zenStickyMu sync.Mutex
+var zenStickyProxy string
+
+func getZenStickyProxy() string {
+	zenStickyMu.Lock()
+	defer zenStickyMu.Unlock()
+	return zenStickyProxy
+}
+
+func setZenStickyProxy(u string) {
+	if u == "" {
+		return
+	}
+	zenStickyMu.Lock()
+	zenStickyProxy = u
+	zenStickyMu.Unlock()
+}
+
 // pickZenProxy 按策略选择代理,返回 (代理URL, 索引);无代理返回 ("", -1)。
 // 跳过冷却中的代理;全部冷却时返回最早恢复的近似(轮询位)。
 // 每次调用递增计数,保证 round_robin 顺序与日志索引一致。
@@ -115,23 +146,49 @@ func pickZenProxy() (string, int) {
 		idx = int(kit.RandIntn(n))
 	case "fill":
 		idx = 0
+	case "sticky":
+		// 优先队列(手工大模型检测通过的节点): 按加入顺序找第一个可用出口。
+		// 队列节点全部冷却/失效时才继续走粘性与常规选择。
+		for _, s := range subPreferredSnapshot() {
+			for i, p := range proxies {
+				if p == s && zenProxyAvailable(p) {
+					return p, i
+				}
+			}
+		}
+		// 粘住最近成功的出口: 仍在池内且未冷却则直接复用;
+		// 粘性失效(被删/封禁/冷却)时走下面的探测循环另选, 选中者成为新粘性。
+		if s := getZenStickyProxy(); s != "" {
+			for i, p := range proxies {
+				if p == s {
+					if zenProxyAvailable(p) {
+						return p, i
+					}
+					break
+				}
+			}
+		}
 	}
 	// 冷却跳过:线性探测下一个可用代理
 	for i := 0; i < n; i++ {
-		if zenProxyAvailable(idx) {
+		if zenProxyAvailable(proxies[idx]) {
 			break
 		}
 		idx = (idx + 1) % n
+	}
+	if getZenConfig().ProxyStrategy == "sticky" && idx >= 0 && idx < n {
+		setZenStickyProxy(proxies[idx])
 	}
 	return proxies[idx], idx
 }
 
 // zenProxyPick 记录某次请求实际拨号使用的代理, 通过请求上下文传给 callZenAPI。
-// pickZenProxy 在每次拨号(zenDialContext)时写入, 请求结束后由调用方读取用于精确冷却。
-// 连接被复用(keep-alive)时本次请求不会拨号, 此时 idx 保持 -1, 调用方回退到计数法。
+// pickZenProxy 在每次拨号(zenDialContext)时写入, 请求结束后由调用方读取用于
+// 精确冷却/封禁(按 url 记账)。连接被复用(keep-alive)时本次请求不会拨号,
+// 此时 url 保持空, 调用方不做冷却。
 type zenProxyPick struct {
-	idx int
-	url string
+	idx int    // 池内索引, 仅日志用
+	url string // 实际拨号代理 URL, 冷却/封禁记账键
 }
 
 type zenPickKey struct{}

@@ -551,7 +551,7 @@ func wbModelList() []map[string]any {
 			continue
 		}
 		publicID := m.ID
-		if dup[m.ID] {
+		if dup[strings.ToLower(m.ID)] {
 			publicID = provider + "/" + m.ID
 		}
 		cost := "paid"

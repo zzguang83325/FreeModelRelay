@@ -234,7 +234,7 @@ body:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
 <div class="nav-item" data-tab="workbuddy-ai"><span class="nav-ico">🐧</span> WorkBuddy国际版</div>
 <div class="nav-item" data-tab="qoder"><span class="nav-ico">🔷</span> Qoder账号管理</div>
 <div class="nav-item" data-tab="trae"><span class="nav-ico">🟣</span> Trae账号管理</div>
-<div class="nav-item" data-tab="loomy"><span class="nav-ico">🅾️</span> 科大讯飞</div>
+<div class="nav-item" data-tab="loomy"><span class="nav-ico">🅾️</span> 科大讯飞Loomy</div>
 <div class="nav-item" data-tab="chat"><span class="nav-ico">💬</span> 模型聊天</div>
 <div class="nav-item" data-tab="egress-proxy"><span class="nav-ico">🧭</span> 网络设置</div>
 <div class="nav-item" data-tab="logs"><span class="nav-ico">📜</span> 请求日志</div>
@@ -295,6 +295,32 @@ body:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
 <div id="tab-dashboard" class="tab-panel">
 <h2>📊 仪表盘</h2>
 <div class="section">
+  <div class="section-title">⚡ 运行概览
+    <button class="btn btn-sm" onclick="loadDashboardSummary()" style="margin-left:auto">🔄 刷新</button>
+  </div>
+  <div class="section-body">
+    <div class="cards" id="summaryCards" style="margin-bottom:0"><div class="empty">加载中...</div></div>
+  </div>
+</div>
+<div class="section">
+  <div class="section-title">📈 实时请求流量（最近 60 分钟）</div>
+  <div class="section-body" style="padding:12px 8px 8px">
+    <div id="trafficChartWrap" style="width:100%;overflow-x:auto"></div>
+  </div>
+</div>
+<div class="section">
+  <div class="section-title">🪙 Token 用量分析（按 Provider）</div>
+  <div class="section-body" style="padding:6px">
+    <div id="tokenUsageBox"><div class="empty">加载中...</div></div>
+  </div>
+</div>
+<div class="section">
+  <div class="section-title">🏆 Top 10 模型（按请求数）</div>
+  <div class="section-body" style="padding:6px">
+    <div id="topModelsBox"><div class="empty">加载中...</div></div>
+  </div>
+</div>
+<div class="section">
   <div class="section-title">🤖 各模型来源模型数
     <button class="btn btn-sm" onclick="loadModelStats()" style="margin-left:auto">🔄 刷新</button>
   </div>
@@ -303,7 +329,7 @@ body:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
   </div>
 </div>
 <div class="section">
-  <div class="section-title">💎 积分与签到（WorkBuddy / 国际版 / Qoder / Trae）
+  <div class="section-title">💎 积分与签到（WorkBuddy / 国际版 / Qoder / Trae / 科大讯飞Loomy）
     <button class="btn btn-sm" onclick="loadCredits()" style="margin-left:auto">🔄 刷新</button>
     <button class="btn btn-sm btn-primary" onclick="doCheckinAll()" style="margin-left:6px" title="对当前有签到活动的来源依次签到，已签到的会跳过">🎁 一键签到</button>
   </div>
@@ -556,7 +582,7 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
     <div class="form-row">
       <div class="field"><label>系统代理检测</label><span id="epSystem" class="hint" style="margin:0;align-self:center">-</span></div>
     </div>
-    <div class="hint" style="margin-top:4px">优先级：手动指定 &gt; Windows 系统代理 &gt; HTTP_PROXY / HTTPS_PROXY 环境变量 &gt; 直连。本机回环地址（127.0.0.1 / ::1）永远直连。opencode zen 页的「代理列表」是 zen 通道专用的多出口轮询池，优先级高于本页设置。</div>
+    <div class="hint" style="margin-top:4px">优先级：手动指定 &gt; Windows 系统代理 &gt; HTTP_PROXY / HTTPS_PROXY 环境变量 &gt; 直连。本机回环地址（127.0.0.1 / ::1）永远直连。opencode zen 通道的多出口轮询池来自「opencode 免费模型」页的机场订阅节点，优先级高于本页设置。</div>
   </div>
 </div>
 
@@ -583,6 +609,50 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
 <h2>🌐 opencode 免费模型（统一网关）</h2>
 
 <div class="section">
+  <div class="section-title">🛫 机场订阅（自动注入 zen 代理池）</div>
+  <div class="section-body">
+    <div class="form-row">
+      <div class="field"><label>启用订阅</label>
+        <select id="subEnabled"><option value="true">开启</option><option value="false">关闭</option></select>
+      </div>
+      <div class="field"><label>自动刷新间隔（分钟）</label><input type="text" id="subInterval" placeholder="360"></div>
+      <div class="field"><label>节点健康检测间隔（分钟）</label><input type="text" id="subProbeMin" placeholder="15"></div>
+    </div>
+    <div class="form-row">
+      <div class="field"><label>订阅地址（每行一个，自动解析 trojan / vless / hysteria2 节点）</label>
+        <textarea id="subUrls" rows="4" placeholder="https://example.com/sub?token=xxx"></textarea>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="saveSubscriptions()">💾 保存并刷新</button>
+      <button class="btn" onclick="refreshSubscriptionsNow()">🔄 仅更新订阅</button>
+      <span id="subStatus" class="hint" style="align-self:center;margin-left:8px">-</span>
+    </div>
+    <div class="hint" style="margin-top:4px">节点解析后自动在本机 11200 起的空闲端口开启本地 socks 出口，并入 zen 通道轮询池（对抗 IP 限流）；定时探测节点连通性，连续 2 次失败的节点自动移出轮询池（恢复后自动回归）；被上游封禁（429 Retry-After 超过 1 小时）的节点直接移出轮询池并不再显示；不影响统一出口代理与其他通道。</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">📡 订阅节点
+    <span id="subProbeBadge" style="margin-left:8px;font-size:12px"></span>
+    <button class="btn btn-sm" style="margin-left:auto" onclick="probeSubscriptionsNow()">🩺 检测节点</button>
+    <button class="btn btn-sm" onclick="unbanSubscriptions()" title="恢复全部被拉黑节点（清空出口 IP 黑名单），拉黑记录由上游限流/封禁产生">🧹 清空黑名单</button>
+  </div>
+  <div class="section-body">
+    <div id="subNodesBox" class="hint">加载中…</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">📈 代理节点使用记录
+    <button class="btn btn-sm" onclick="loadProxyUsage()" style="margin-left:auto">🔄 刷新</button>
+  </div>
+  <div class="section-body">
+    <div id="proxyUsageBox" class="hint">加载中…</div>
+  </div>
+</div>
+
+<div class="section">
   <div class="section-title">🔄 上游配置</div>
   <div class="section-body">
     <div class="form-row">
@@ -594,13 +664,11 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
     <div class="form-row">
       <div class="field"><label>Base URL</label><input type="text" id="ocBaseURL" placeholder="https://opencode.ai/zen/v1"></div>
       <div class="field"><label>代理策略</label>
-        <select id="ocStrategy"><option value="round_robin">轮询 round_robin</option><option value="random">随机 random</option><option value="fill">固定 fill</option></select>
+        <select id="ocStrategy"><option value="sticky">粘住可用节点 sticky（推荐）</option><option value="round_robin">轮询 round_robin</option><option value="random">随机 random</option><option value="fill">固定 fill</option></select>
       </div>
     </div>
     <div class="form-row">
-      <div class="field"><label>代理列表</label>
-        <textarea id="ocProxies" rows="3" placeholder="每行一个: http://user:pass@host:port 或 socks5://host:port"></textarea>
-      </div>
+      <div class="field"><label>代理出口</label><span class="hint" style="margin:0;align-self:center">自动使用本页上方「机场订阅」节点的本地 socks 出口，无需手动填写代理列表</span></div>
     </div>
     <div class="form-row">
       <div class="field"><label>代理冷却</label><span id="ocCooldownInfo" class="hint" style="margin:0;align-self:center">-</span></div>
@@ -697,35 +765,6 @@ $env:ANTHROPIC_MODEL = "deepseek/deepseek-v4-flash"</pre>
   </div>
 </div>
 
-<div class="section">
-  <div class="section-title">🛫 机场订阅（自动注入 zen 代理池）</div>
-  <div class="section-body">
-    <div class="form-row">
-      <div class="field"><label>启用订阅</label>
-        <select id="subEnabled"><option value="true">开启</option><option value="false">关闭</option></select>
-      </div>
-      <div class="field"><label>自动刷新间隔（分钟）</label><input type="text" id="subInterval" placeholder="360"></div>
-    </div>
-    <div class="form-row">
-      <div class="field"><label>订阅地址（每行一个，自动解析 trojan / vless / hysteria2 节点）</label>
-        <textarea id="subUrls" rows="4" placeholder="https://example.com/sub?token=xxx"></textarea>
-      </div>
-    </div>
-    <div class="form-actions">
-      <button class="btn btn-primary" onclick="saveSubscriptions()">💾 保存并刷新</button>
-      <button class="btn" onclick="refreshSubscriptionsNow()">🔄 仅更新订阅</button>
-      <span id="subStatus" class="hint" style="align-self:center;margin-left:8px">-</span>
-    </div>
-    <div class="hint" style="margin-top:4px">节点解析后自动在本机 11200 起的空闲端口开启本地 socks 出口，并入 zen 通道轮询池（对抗 IP 限流），坏节点自动冷却跳过；不影响统一出口代理与其他通道。</div>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">📡 订阅节点</div>
-  <div class="section-body">
-    <div id="subNodesBox" class="hint">加载中…</div>
-  </div>
-</div>
 </div>
 
 <!-- ============ WorkBuddy (CN) ============ -->
@@ -1113,10 +1152,10 @@ document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.add('active');
     document.querySelectorAll('.tab-panel').forEach(e => e.style.display = 'none');
     _('tab-' + el.dataset.tab).style.display = 'block';
-    if (el.dataset.tab === 'dashboard') { loadStats(); loadModelStats(); loadAccounts(); loadKeys(); loadCredits(); }
+    if (el.dataset.tab === 'dashboard') { loadStats(); loadDashboardSummary(); loadModelStats(); loadAccounts(); loadKeys(); loadCredits(); }
     if (el.dataset.tab === 'cline') { loadAccounts(); loadModels(); loadConfig(); }
     if (el.dataset.tab === 'logs') loadLogs();
-    if (el.dataset.tab === 'opencode') { loadOcConfig(); loadOcModels(); loadOcStats(); loadSubscriptions(); }
+    if (el.dataset.tab === 'opencode') { loadOcConfig(); loadOcModels(); loadOcStats(); loadSubscriptions(); loadProxyUsage(); }
     if (el.dataset.tab === 'workbuddy') { loadProviders(); loadWBConfig('workbuddy'); loadCredits(); }
     if (el.dataset.tab === 'workbuddy-ai') { loadProviders(); loadWBConfig('workbuddy-ai'); loadCredits(); }
     if (el.dataset.tab === 'qoder') { loadProviders(); loadQoderConfig(); loadCredits(); }
@@ -1124,7 +1163,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
     if (el.dataset.tab === 'loomy') { loadProviders(); loadLoomyConfig(); loadCredits(); }
     if (el.dataset.tab === 'chat') loadChatModels();
     if (el.dataset.tab === 'models') loadAllModels();
-    if (el.dataset.tab === 'egress-proxy') { loadEgressProxyConfig(); loadSubscriptions(); }
+    if (el.dataset.tab === 'egress-proxy') loadEgressProxyConfig();
   });
 });
 
@@ -1134,17 +1173,18 @@ function switchTab(name) {
   });
   document.querySelectorAll('.tab-panel').forEach(e => e.style.display = 'none');
   _('tab-' + name).style.display = 'block';
-  if (name === 'dashboard') { loadStats(); loadModelStats(); loadAccounts(); loadKeys(); loadCredits(); }
+  if (name === 'dashboard') { loadStats(); loadDashboardSummary(); loadModelStats(); loadAccounts(); loadKeys(); loadCredits(); }
   if (name === 'cline') { loadAccounts(); loadModels(); loadConfig(); }
   if (name === 'logs') loadLogs();
-  if (name === 'opencode') { loadOcConfig(); loadOcModels(); loadOcStats(); loadSubscriptions(); }
+  if (name === 'opencode') { loadOcConfig(); loadOcModels(); loadOcStats(); loadSubscriptions(); loadProxyUsage(); }
   if (name === 'workbuddy') { loadProviders(); loadWBConfig('workbuddy'); loadCredits(); }
   if (name === 'workbuddy-ai') { loadProviders(); loadWBConfig('workbuddy-ai'); loadCredits(); }
   if (name === 'qoder') { loadProviders(); loadQoderConfig(); loadCredits(); }
   if (name === 'trae') { loadProviders(); loadTraeConfig(); loadCredits(); }
+  if (name === 'loomy') { loadProviders(); loadLoomyConfig(); loadCredits(); }
   if (name === 'chat') loadChatModels();
   if (name === 'models') loadAllModels();
-  if (name === 'egress-proxy') { loadEgressProxyConfig(); loadSubscriptions(); }
+  if (name === 'egress-proxy') loadEgressProxyConfig();
 }
 
 // Cline 子标签
@@ -1189,6 +1229,150 @@ async function loadStats() {
     if (s.version) _('settingVersion').value = s.version;
     if (s.strategy) _('settingStrategy').value = s.strategy;
   } catch (e) { /* ignore */ }
+}
+
+// ========== 仪表盘概览 + 流量图 + Token 用量 ==========
+let dashData = null;
+let dashTimer = null;
+
+async function loadDashboardSummary() {
+  try {
+    const d = await api('GET', '/dashboard/summary');
+    dashData = d.data || {};
+    renderSummaryCards();
+    renderTrafficChart();
+    renderTokenUsage();
+    renderTopModels();
+  } catch (e) {
+    _('summaryCards').innerHTML = '<div class="empty">加载失败: ' + esc(e.message) + '</div>';
+  }
+}
+
+// fmtNum 使用 L1119 的既有定义(完整数字 toLocaleString); 仪表盘曾在此重复声明
+// function fmtNum 导致整个页面 JS SyntaxError, 已删除。
+
+function renderSummaryCards() {
+  const box = _('summaryCards');
+  if (!box || !dashData) return;
+  const cards = [
+    { label: '运行时长', value: esc(dashData.uptime || '-'), color: 'var(--text)' },
+    { label: '总请求数', value: fmtNum(dashData.totalRequests || 0), color: 'var(--accent)' },
+    { label: '总错误数', value: fmtNum(dashData.totalErrors || 0), color: dashData.totalErrors > 0 ? 'var(--danger)' : 'var(--accent2)' },
+    { label: '错误率', value: (dashData.errorRate || 0).toFixed(1) + '%', color: (dashData.errorRate || 0) > 5 ? 'var(--danger)' : 'var(--accent2)' },
+    { label: '输入 Tokens', value: fmtNum(dashData.totalPromptTokens || 0), color: 'var(--text)' },
+    { label: '输出 Tokens', value: fmtNum(dashData.totalCompletionTokens || 0), color: 'var(--text)' },
+  ];
+  box.innerHTML = cards.map(c =>
+    '<div class="card"><div class="label">' + c.label + '</div><div style="font-size:22px;font-weight:700;color:' + c.color + ';margin-top:6px">' + c.value + '</div></div>'
+  ).join('');
+}
+
+function renderTrafficChart() {
+  const wrap = _('trafficChartWrap');
+  if (!wrap || !dashData || !dashData.traffic || !dashData.traffic.length) {
+    if (wrap) wrap.innerHTML = '<div class="empty">暂无流量数据</div>';
+    return;
+  }
+  const data = dashData.traffic;
+  const W = 780, H = 160, padL = 40, padR = 10, padT = 15, padB = 30;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const maxVal = Math.max(1, ...data.map(d => d.count));
+  const stepX = plotW / Math.max(1, data.length - 1);
+
+  let pathD = '';
+  let areaD = '';
+  let dots = '';
+  let labels = '';
+  data.forEach((d, i) => {
+    const x = padL + i * stepX;
+    const y = padT + plotH - (d.count / maxVal) * plotH;
+    if (i === 0) { pathD += 'M' + x + ',' + y; areaD += 'M' + x + ',' + (padT + plotH) + ' L' + x + ',' + y; }
+    else { pathD += ' L' + x + ',' + y; areaD += ' L' + x + ',' + y; }
+    if (d.count > 0) dots += '<circle cx="' + x + '" cy="' + y + '" r="2.5" fill="var(--accent)" opacity="0.7"><title>' + esc(d.label) + ': ' + d.count + '</title></circle>';
+    // 每 10 个显示一个标签
+    if (i % 10 === 0 || i === data.length - 1) {
+      labels += '<text x="' + x + '" y="' + (H - 4) + '" text-anchor="middle" font-size="9" fill="var(--text3)">' + esc(d.label) + '</text>';
+    }
+  });
+  areaD += ' L' + (padL + (data.length - 1) * stepX) + ',' + (padT + plotH) + ' Z';
+
+  // Y 轴刻度
+  let yAxis = '';
+  for (let i = 0; i <= 4; i++) {
+    const val = Math.round(maxVal * i / 4);
+    const y = padT + plotH - (plotH * i / 4);
+    yAxis += '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="var(--border)" stroke-dasharray="3,3" />';
+    yAxis += '<text x="' + (padL - 5) + '" y="' + (y + 3) + '" text-anchor="end" font-size="9" fill="var(--text3)">' + val + '</text>';
+  }
+
+  wrap.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:' + W + 'px;height:auto;display:block">' +
+    yAxis +
+    '<path d="' + areaD + '" fill="var(--accent)" opacity="0.08" />' +
+    '<path d="' + pathD + '" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round" />' +
+    dots + labels +
+    '</svg>';
+}
+
+const providerLabels = { 'cline': 'Cline', 'zen': 'Zen', 'workbuddy': 'WorkBuddy', 'workbuddy-ai': 'WorkBuddy国际', 'qoder': 'Qoder', 'trae': 'Trae', 'loomy': '科大讯飞Loomy' };
+const providerColors = ['#0ea5e9', '#34d399', '#f59e0b', '#f97316', '#818cf8', '#a78bfa', '#fb7185'];
+
+function renderTokenUsage() {
+  const box = _('tokenUsageBox');
+  if (!box || !dashData || !dashData.providers) { box.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+  const provs = dashData.providers;
+  const keys = Object.keys(provs);
+  if (!keys.length) { box.innerHTML = '<div class="empty">暂无调用记录</div>'; return; }
+
+  const totalPT = keys.reduce((s, k) => s + (provs[k].promptTokens || 0), 0);
+  const totalCT = keys.reduce((s, k) => s + (provs[k].completionTokens || 0), 0);
+  const grandTotal = totalPT + totalCT || 1;
+
+  let html = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">';
+  html += '<div style="font-size:12px;color:var(--text2)">总计: <b style="color:var(--text)">' + fmtNum(totalPT) + '</b> in / <b style="color:var(--text)">' + fmtNum(totalCT) + '</b> out</div>';
+  html += '</div>';
+
+  // 堆叠进度条
+  html += '<div style="display:flex;height:22px;border-radius:6px;overflow:hidden;background:rgba(148,163,184,.1);margin-bottom:12px">';
+  keys.forEach((k, i) => {
+    const p = provs[k];
+    const t = (p.promptTokens || 0) + (p.completionTokens || 0);
+    const pct = (t / grandTotal * 100).toFixed(1);
+    if (t > 0) {
+      html += '<div style="width:' + pct + '%;background:' + providerColors[i % providerColors.length] + ';display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;font-weight:600;min-width:' + (parseFloat(pct) > 5 ? '0' : '2px') + '" title="' + esc(providerLabels[k] || k) + ': ' + fmtNum(t) + ' (' + pct + '%)">' + (parseFloat(pct) > 8 ? esc(providerLabels[k] || k) : '') + '</div>';
+    }
+  });
+  html += '</div>';
+
+  // 明细表
+  html += '<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;color:var(--text3);border-bottom:1px solid var(--border)">来源</th><th style="text-align:right;padding:4px 8px;color:var(--text3);border-bottom:1px solid var(--border)">请求数</th><th style="text-align:right;padding:4px 8px;color:var(--text3);border-bottom:1px solid var(--border)">输入</th><th style="text-align:right;padding:4px 8px;color:var(--text3);border-bottom:1px solid var(--border)">输出</th><th style="text-align:right;padding:4px 8px;color:var(--text3);border-bottom:1px solid var(--border)">错误</th></tr></thead><tbody>';
+  keys.forEach((k, i) => {
+    const p = provs[k];
+    html += '<tr><td style="padding:4px 8px;border-bottom:1px solid var(--border)"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + providerColors[i % providerColors.length] + ';margin-right:6px"></span>' + esc(providerLabels[k] || k) + '</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid var(--border)">' + (p.requests || 0) + '</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid var(--border)">' + fmtNum(p.promptTokens || 0) + '</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid var(--border)">' + fmtNum(p.completionTokens || 0) + '</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid var(--border);color:' + ((p.errors || 0) > 0 ? 'var(--danger)' : 'var(--text2)') + '">' + (p.errors || 0) + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  box.innerHTML = html;
+}
+
+function renderTopModels() {
+  const box = _('topModelsBox');
+  if (!box || !dashData || !dashData.topModels || !dashData.topModels.length) {
+    if (box) box.innerHTML = '<div class="empty">暂无数据</div>';
+    return;
+  }
+  let html = '<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;color:var(--text3);border-bottom:1px solid var(--border)">#</th><th style="text-align:left;padding:4px 8px;color:var(--text3);border-bottom:1px solid var(--border)">模型</th><th style="text-align:right;padding:4px 8px;color:var(--text3);border-bottom:1px solid var(--border)">请求数</th><th style="text-align:right;padding:4px 8px;color:var(--text3);border-bottom:1px solid var(--border)">输入</th><th style="text-align:right;padding:4px 8px;color:var(--text3);border-bottom:1px solid var(--border)">输出</th></tr></thead><tbody>';
+  dashData.topModels.forEach((m, i) => {
+    html += '<tr><td style="padding:4px 8px;border-bottom:1px solid var(--border);color:var(--text3)">' + (i + 1) + '</td><td style="padding:4px 8px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px">' + esc(m.model) + '</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid var(--border)">' + fmtNum(m.requests) + '</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid var(--border)">' + fmtNum(m.promptTokens) + '</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid var(--border)">' + fmtNum(m.completionTokens) + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  box.innerHTML = html;
+}
+
+function startDashAutoRefresh() {
+  if (dashTimer) clearInterval(dashTimer);
+  dashTimer = setInterval(() => {
+    const activeTab = document.querySelector('.nav-item.active');
+    if (activeTab && activeTab.getAttribute('data-tab') === 'dashboard') loadDashboardSummary();
+  }, 30000);
 }
 
 // 各模型来源的模型总数 / 免费模型数, 并在有积分的来源上补充剩余积分。
@@ -1743,7 +1927,6 @@ async function loadOcConfig() {
     _('ocEnabled').value = String(c.enabled);
     _('ocKey').value = c.key || 'public';
     _('ocBaseURL').value = c.baseURL || '';
-    _('ocProxies').value = (c.proxies || []).join('\n');
     _('ocStrategy').value = c.proxyStrategy || 'round_robin';
     _('ocMaxConc').value = c.maxConcurrency || 8;
     _('ocRetries').value = c.retries || 3;
@@ -1775,15 +1958,11 @@ async function loadOcConfig() {
 }
 
 async function saveOcConfig() {
-  const proxies = _('ocProxies').value.split('\n').map(s => s.trim()).filter(Boolean);
-  const PROXY_RE = /^(https?|socks5h?):\/\/[^\s]+:\d+/;
-  const bad = proxies.find(p => !PROXY_RE.test(p));
-  if (bad) { toast('代理格式无效: ' + bad + '（需 http(s)://host:port 或 socks5://host:port）', 'error'); return; }
   const body = {
     enabled: _('ocEnabled').value === 'true',
     key: _('ocKey').value.trim(),
     baseURL: _('ocBaseURL').value.trim(),
-    proxies: proxies,
+    proxies: [], // 不再使用手动代理列表, 出口全部来自机场订阅节点
     proxyStrategy: _('ocStrategy').value,
     maxConcurrency: parseInt(_('ocMaxConc').value) || 8,
     retries: parseInt(_('ocRetries').value) || 3,
@@ -1854,23 +2033,88 @@ async function saveEgressProxyConfig() {
   } catch (e) { toast('保存失败: ' + e.message, 'error'); }
 }
 
+// 单节点检测后列表刷新时, 需要重新定位回该节点行的本地端口号
+let subFocusPort = 0;
+
 async function loadSubscriptions() {
   try {
     const d = await api('GET', '/subscriptions');
     const c = d.data || {};
     _('subEnabled').value = String(c.enabled === true);
     _('subInterval').value = c.intervalMin || 360;
+    _('subProbeMin').value = c.probeMin || 15;
     _('subUrls').value = (c.urls || []).join('\n');
     const err = c.lastError ? ' · <span style="color:#d9534f">' + esc(c.lastError) + '</span>' : '';
-    _('subStatus').innerHTML = '生效 ' + (c.liveCount || 0) + ' 节点 · 上次刷新: ' + (c.lastRefresh || '-') + err;
+    _('subStatus').innerHTML = '生效 ' + (c.liveCount || 0) + ' 节点 · 池内 ' + (c.activeCount || 0) + ' · 上次刷新: ' + (c.lastRefresh || '-') + err;
+    const pb = _('subProbeBadge');
+    if (pb) pb.innerHTML = c.probing ? '<span style="color:#f0ad4e">🩺 全量检测中…</span>' : '';
     const nodes = c.nodes || [];
     if (!nodes.length) {
       _('subNodesBox').textContent = '暂无生效节点（保存订阅地址后自动拉取解析）';
     } else {
-      const rows = nodes.map(n => '<tr><td style="text-align:left">' + esc(n.name) + '</td><td>' + esc(n.protocol) + '</td><td style="text-align:left;font-family:monospace;font-size:12px">' + esc(n.server) + '</td><td>' + n.remotePort + '</td><td><b>' + n.localPort + '</b></td></tr>').join('');
-      _('subNodesBox').innerHTML = '<div class="table-wrap" style="max-height:300px;overflow-y:auto"><table><thead><tr><th style="text-align:left">节点</th><th>协议</th><th style="text-align:left">服务器</th><th>远程端口</th><th>本地端口</th></tr></thead><tbody>' + rows + '</tbody></table></div><div class="hint">共 ' + nodes.length + ' 个节点，本地端口自动分配（11200 起），已并入 zen 轮询池。</div>';
+      const cnt = { ok: 0, un: 0, warn: 0, dead: 0 };
+      const badge = n => {
+        if (n.health === 'dead') { cnt.dead++; return '<span style="color:#f0ad4e">⚠️ 失联</span>'; }
+        if (n.health === 'ok') {
+          if (n.fails > 0) { cnt.warn++; return '<span style="color:#f0ad4e">🟠 待复测</span>'; }
+          cnt.ok++; return '<span style="color:#5cb85c">✅ 可用</span>';
+        }
+        cnt.un++; return '<span style="color:#888">➖ 未探测</span>';
+      };
+      const rows = nodes.map(n => {
+        const st = badge(n)
+          + (n.health === 'ok' && n.fails > 0 ? ' <span style="color:#999;font-size:11px">失败' + n.fails + '次</span>' : '')
+          + (n.latencyMs ? ' <span style="color:#999;font-size:11px">' + n.latencyMs + 'ms</span>' : '');
+        const probeBtn = '<button class="btn" style="padding:0 8px;font-size:11px" onclick="probeOneNode(' + n.localPort + ', this)">🔍 检测</button>';
+        const tip = '最近探测: ' + (n.lastProbe || '从未') + (n.fails ? ' · 连续失败: ' + n.fails + ' 次' : '');
+        const nameCell = (n.preferred ? '<span title="优先使用队列" style="cursor:default">⭐</span> ' : '') + esc(n.name);
+        return '<tr id="subNodeRow-' + n.localPort + '"' + (n.health === 'dead' ? ' style="opacity:.55"' : '') + '><td style="text-align:left">' + nameCell + '</td><td>' + esc(n.protocol) + '</td><td style="text-align:left;font-family:monospace;font-size:12px">' + esc(n.server) + '</td><td style="text-align:left;font-size:12px">' + esc(n.region || '-') + '</td><td>' + n.remotePort + '</td><td><b>' + n.localPort + '</b></td><td title="' + esc(tip) + '">' + st + '</td><td>' + probeBtn + '</td></tr>';
+      }).join('');
+      const sumLine = '节点状态: <span style="color:#5cb85c">✅ 可用 ' + cnt.ok + '</span> · <span style="color:#888">➖ 未探测 ' + cnt.un + '</span>' + (cnt.warn ? ' · <span style="color:#f0ad4e">🟠 待复测 ' + cnt.warn + '</span>' : '') + (cnt.dead ? ' · <span style="color:#f0ad4e">⚠️ 失联 ' + cnt.dead + '</span>' : '');
+      const box = _('subNodesBox');
+      // 重绘前记住列表滚动位置, 重绘后还原, 避免刷新后跳回顶部
+      const prevWrap = box.querySelector('.table-wrap');
+      const prevTop = prevWrap ? prevWrap.scrollTop : 0;
+      box.innerHTML = '<div style="margin-bottom:6px;font-size:12px">' + sumLine + '</div><div class="table-wrap" style="max-height:300px;overflow-y:auto"><table><thead><tr><th style="text-align:left">节点</th><th>协议</th><th style="text-align:left">服务器</th><th>地区</th><th>远程端口</th><th>本地端口</th><th>状态</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table></div><div class="hint">共 ' + nodes.length + ' 个节点。状态含义: ✅可用(参与轮询) · ➖未探测(视为可用) · 🟠待复测(上次失败1次,仍在轮询池) · ⚠️失联(已移出轮询)。「🩺 检测节点」为全部检测(后台执行,完成后提示), 每行的「🔍 检测」为单独检测; 连续 2 次失败的节点自动删除（订阅中仍存在时下轮刷新自动重加）。</div>';
+      const newWrap = box.querySelector('.table-wrap');
+      if (newWrap) {
+        newWrap.scrollTop = prevTop;
+        // 定位回刚检测过的节点行(节点已被删除则放弃定位)
+        if (subFocusPort) {
+          const row = document.getElementById('subNodeRow-' + subFocusPort);
+          if (row) {
+            const rr = row.getBoundingClientRect(), wr = newWrap.getBoundingClientRect();
+            newWrap.scrollTop += (rr.top - wr.top) - (wr.height - rr.height) / 2;
+            row.style.background = 'rgba(92,184,92,.18)';
+            setTimeout(() => { row.style.background = ''; }, 2500);
+          }
+          subFocusPort = 0;   // 定位只生效一次
+        }
+      }
     }
   } catch (e) { _('subStatus').textContent = '加载失败'; }
+}
+
+// loadProxyUsage 代理节点使用记录: 每次 zen 上游访问的模型/出口/结果
+async function loadProxyUsage() {
+  try {
+    const d = await api('GET', '/opencode/proxy-usage');
+    const rows = d.data || [];
+    if (!rows.length) { _('proxyUsageBox').textContent = '暂无记录（发起一次 opencode 请求后，这里会显示每次访问使用的模型与出口节点）'; return; }
+    const trs = rows.map(r => {
+      const ok = r.status === '成功';
+      const color = ok ? '#5cb85c' : (r.status === '网络错误' || r.status.indexOf('HTTP 4') === 0 ? '#d9534f' : '#f0ad4e');
+      return '<tr><td style="text-align:left;font-family:monospace">' + esc(r.time) + '</td>'
+        + '<td style="text-align:left">' + esc(r.model) + '</td>'
+        + '<td style="text-align:left;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(r.node) + '">' + esc(r.node) + '</td>'
+        + '<td style="text-align:left;font-family:monospace;font-size:11px" title="真实出口 IP，未探测过时为节点服务器地址">' + esc(r.ip || '-') + '</td>'
+        + '<td style="text-align:left">' + esc(r.region || '-') + '</td>'
+        + '<td style="color:' + color + '">' + esc(r.status) + '</td>'
+        + '<td>' + (r.latencyMs || '-') + '</td>'
+        + '<td style="text-align:left;color:#999;font-size:11px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(r.detail || '') + '">' + esc(r.detail || '-') + '</td></tr>';
+    }).join('');
+    _('proxyUsageBox').innerHTML = '<div class="table-wrap" style="max-height:320px;overflow-y:auto"><table><thead><tr><th style="text-align:left">时间</th><th style="text-align:left">模型</th><th style="text-align:left">出口节点</th><th style="text-align:left">出口 IP</th><th style="text-align:left">地区</th><th>结果</th><th>首包(ms)</th><th style="text-align:left">详情</th></tr></thead><tbody>' + trs + '</tbody></table></div><div class="hint">内存保留最近 ' + rows.length + ' 条（重启清空），每次上游尝试一条（含限流重试）；「↻ 复用连接」= 本次请求复用既有连接，实际出口与该连接建立时所选节点一致。</div>';
+  } catch (e) { _('proxyUsageBox').textContent = '加载失败: ' + e.message; }
 }
 
 async function saveSubscriptions() {
@@ -1879,15 +2123,81 @@ async function saveSubscriptions() {
     if (!/^https?:\/\/.+/i.test(u)) { toast('订阅地址无效: ' + u, 'error'); return; }
   }
   const interval = parseInt(_('subInterval').value, 10) || 360;
+  const probeMin = parseInt(_('subProbeMin').value, 10) || 15;
   try {
     await api('POST', '/subscriptions/update', {
       enabled: _('subEnabled').value === 'true',
       urls: urls,
-      intervalMin: interval
+      intervalMin: interval,
+      probeMin: probeMin
     });
     toast('订阅配置已保存，正在后台刷新…', 'success');
     setTimeout(loadSubscriptions, 3000);
   } catch (e) { toast('保存失败: ' + e.message, 'error'); }
+}
+
+let probePollTimer = null;
+
+// probeSubscriptionsNow 全量检测异步触发: 后端立即返回后台执行, 前端轮询
+// probing 字段直到完成, 再按 probeSummary 提示结果(避免 HTTP 长挂分钟级)。
+async function probeSubscriptionsNow() {
+  try {
+    const d = await api('POST', '/subscriptions/probe', {});
+    if (d.data && d.data.probing) {
+      toast('全量检测已开始，完成后自动提示结果', 'info');
+      watchProbeStatus();
+    } else {
+      toast('检测未启动（可能订阅刷新进行中，稍后自动重试）', 'info');
+    }
+  } catch (e) { toast('触发检测失败: ' + e.message, 'error'); }
+  loadSubscriptions();
+}
+
+// unbanSubscriptions 清空黑名单: 恢复全部被拉黑节点(含出口 IP 黑名单)
+async function unbanSubscriptions() {
+  if (!confirm('确定清空黑名单？全部被拉黑的节点将恢复并重新进入轮询池。')) return;
+  try {
+    const d = await api('POST', '/subscriptions/unban', {});
+    toast('已清空黑名单, 恢复 ' + ((d.data && d.data.cleared) || 0) + ' 个节点', 'success');
+  } catch (e) { toast('清空失败: ' + e.message, 'error'); }
+  loadSubscriptions();
+}
+
+function watchProbeStatus() {
+  if (probePollTimer) clearTimeout(probePollTimer);
+  probePollTimer = setTimeout(async () => {
+    try {
+      const d = await api('GET', '/subscriptions');
+      const c = d.data || {};
+      if (c.probing) { loadSubscriptions(); watchProbeStatus(); return; }
+      const s = c.probeSummary || {};
+      if (s.total !== undefined) {
+        toast('检测完成(' + (c.probeSummaryAt || '') + '): ' + (s.ok || 0) + ' 可用 / ' + (s.newDead || 0) + ' 失效删除 / ' + (s.recovered || 0) + ' 恢复 · 耗时 ' + Math.round((s.durationMs || 0) / 1000) + 's', 'success');
+      }
+    } catch (e) { /* 轮询异常忽略, 面板刷新后可见最新状态 */ }
+    loadSubscriptions();
+  }, 2500);
+}
+
+async function probeOneNode(port, btn) {
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '…';
+  subFocusPort = port;   // 刷新后定位回该节点
+  try {
+    const d = await api('POST', '/subscriptions/probe', { localPort: port });
+    const n = d.data && d.data.node;
+    if (n && n.ok) {
+      toast(n.name + ' 检测正常 (' + n.latencyMs + 'ms)' + (n.status === 'banned' ? ' · 当前仍为封禁状态' : ''), n.status === 'banned' ? 'info' : 'success');
+    } else if (n) {
+      toast(n.name + ' 检测失败' + (n.status === 'deleted' ? '，已从节点表删除' : '') + ': ' + (n.error || '').substring(0, 80), 'error');
+    } else {
+      toast('检测失败', 'error');
+    }
+    loadSubscriptions();
+  } catch (e) {
+    toast('检测失败: ' + e.message, 'error');
+  }
+  btn.disabled = false; btn.textContent = old;
 }
 
 async function refreshSubscriptionsNow() {
@@ -2094,10 +2404,11 @@ async function loadCredits() {
     renderCredits('workbuddy-ai', 'wba');
     renderCredits('qoder', 'qd');
     renderCredits('trae', 'tr');
+    renderCredits('loomy', 'lm');
     renderDashCredits();
     renderModelStatCards();
   } catch (e) {
-    ['wbCreditsBox', 'wbaCreditsBox', 'qdCreditsBox', 'trCreditsBox'].forEach(id => {
+    ['wbCreditsBox', 'wbaCreditsBox', 'qdCreditsBox', 'trCreditsBox', 'lmCreditsBox'].forEach(id => {
       const el = _(id);
       if (el) el.innerHTML = '<div class="empty">加载积分失败: ' + esc(e.message) + '</div>';
     });
@@ -2111,7 +2422,7 @@ const CREDIT_SOURCES = [
   { key: 'workbuddy-ai', label: 'WorkBuddy 国际版', prefix: 'wba' },
   { key: 'qoder', label: 'Qoder', prefix: 'qd' },
   { key: 'trae', label: 'Trae', prefix: 'tr' },
-  { key: 'loomy', label: '科大讯飞', prefix: 'lm' }
+  { key: 'loomy', label: '科大讯飞Loomy', prefix: 'lm' }
 ];
 
 // 仪表盘上的紧凑视图：一行一个来源，余额 + 签到状态 + 就地签到按钮。
@@ -2732,12 +3043,13 @@ async function refreshLoomyModels() {
 // ========== 模型聊天 ==========
 let chatHistory = [];
 let chatPending = false;
+let chatModelItems = []; // 聊天页可选模型(含 imageGen 标志), sendChat 据此分流生图请求
 async function loadChatModels() {
   const sel = _('chatModel');
   try {
     // 三个来源合并, 带来源标签, 按去重后的顺序展示
     const items = [];
-    const push = (id, src) => { if (id && !items.some(it => it.id === id)) items.push({ id: id, src: src }); };
+    const push = (id, src, imageGen) => { if (id && !items.some(it => it.id === id)) items.push({ id: id, src: src, imageGen: imageGen === true }); };
     try {
       const d = await api('GET', '/models');
       (d.data.models || []).forEach(m => push(m.id, 'cline'));
@@ -2747,7 +3059,8 @@ async function loadChatModels() {
       (z.data.models || []).forEach(m => push(m.id, 'zen'));
     } catch (_) {}
     // 第三方 provider: 只放可用模型, 未接入的选中也只会 502
-    (await fetchProviderModels()).forEach(m => { if (m.available !== false) push(m.id, m.src); });
+    (await fetchProviderModels()).forEach(m => { if (m.available !== false) push(m.id, m.src, m.imageGen); });
+    chatModelItems = items;
     if (!items.length) { sel.innerHTML = '<option value="">暂无模型</option>'; return; }
     const sig = items.map(it => it.id).join(',');
     if (sel.dataset.sig !== sig) {
@@ -2766,7 +3079,8 @@ function chatRender() {
   box.innerHTML = chatHistory.map(m => {
     if (m.role === 'error') return '<div class="bubble bubble-error">' + esc(m.content) + '</div>';
     const who = m.role === 'user' ? '你' : esc(m.model || 'assistant');
-    return '<div class="bubble bubble-' + m.role + '"><div class="bubble-who">' + who + '</div>' + esc(m.content) + '</div>';
+    const img = m.image ? '<div style="margin-top:8px"><img src="' + esc(m.image) + '" style="max-width:100%;max-height:420px;border-radius:8px;display:block" alt="生成图片" /></div>' : '';
+    return '<div class="bubble bubble-' + m.role + '"><div class="bubble-who">' + who + '</div>' + esc(m.content) + img + '</div>';
   }).join('');
   box.scrollTop = box.scrollHeight;
 }
@@ -2790,6 +3104,32 @@ async function sendChat() {
   chatRender();
   try {
     const headers = { 'Content-Type': 'application/json' };
+    // 生图模型: 走 /v1/images/generations, 不带对话历史, 生成结果以图片展示
+    const mi = chatModelItems.find(x => x.id === model);
+    if (mi && mi.imageGen) {
+      msg.content = '🎨 生成中…';
+      chatRender();
+      const r2 = await fetch('/v1/images/generations', {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({ model: model, prompt: text, n: 1 })
+      });
+      const t2 = await r2.text();
+      if (!r2.ok) {
+        let em = 'HTTP ' + r2.status;
+        try { const ej = JSON.parse(t2); if (ej.error && ej.error.message) em = ej.error.message; } catch (_) {}
+        throw new Error(em);
+      }
+      const j2 = JSON.parse(t2);
+      const item0 = (j2.data && j2.data[0]) || {};
+      const src = item0.url || (item0.b64_json ? 'data:image/png;base64,' + item0.b64_json : '');
+      if (!src) throw new Error('图片响应中没有图片数据');
+      msg.content = text;
+      msg.image = src;
+      if (j2.model) msg.model = j2.model;
+      chatRender();
+      return;
+    }
     const res = await fetch('/v1/chat/completions', {
       method: 'POST',
       headers: headers,
@@ -3151,6 +3491,8 @@ _('chatInput').addEventListener('keydown', e => {
 
 // ========== 初始化 ==========
 loadStats();
+loadDashboardSummary();
+startDashAutoRefresh();
 loadModelStats();
 loadAccounts();
 loadKeys();

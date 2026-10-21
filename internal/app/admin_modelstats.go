@@ -99,6 +99,20 @@ func modelStatsSnapshot() []modelSourceStat {
 		Total: tTotal, Free: tFree,
 	})
 
+	// 科大讯飞Loomy: 点数制(倍率>0), 只有标记 free=true 的限时免费模型计入免费;
+	// key 与 /providers/credits 的 loomy 一致, 仪表盘卡片会附带剩余点数。
+	lTotal, lFree := 0, 0
+	for _, m := range loomyModelList() {
+		lTotal++
+		if f, ok := m["free"].(bool); ok && f {
+			lFree++
+		}
+	}
+	out = append(out, modelSourceStat{
+		Key: "loomy", Label: "科大讯飞Loomy",
+		Total: lTotal, Free: lFree,
+	})
+
 	return out
 }
 

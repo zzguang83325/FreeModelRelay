@@ -106,6 +106,7 @@ func registerAdminRoutes(mux *http.ServeMux) {
 	adminMux.HandleFunc("/admin/api/opencode/models", corsHandler(handleZenModels))
 	adminMux.HandleFunc("/admin/api/opencode/models/refresh", corsHandler(handleZenModelsRefresh))
 	adminMux.HandleFunc("/admin/api/opencode/stats", corsHandler(handleZenStats))
+	adminMux.HandleFunc("/admin/api/opencode/proxy-usage", corsHandler(handleZenProxyUsage))
 	// 旧 zen 路径别名,兼容旧引用
 	adminMux.HandleFunc("/admin/api/zen/config", corsHandler(handleZenConfig))
 	adminMux.HandleFunc("/admin/api/zen/config/update", corsHandler(handleZenConfigUpdate))
@@ -119,9 +120,13 @@ func registerAdminRoutes(mux *http.ServeMux) {
 	adminMux.HandleFunc("/admin/api/subscriptions", corsHandler(handleSubscriptions))
 	adminMux.HandleFunc("/admin/api/subscriptions/update", corsHandler(handleSubscriptionsUpdate))
 	adminMux.HandleFunc("/admin/api/subscriptions/refresh", corsHandler(handleSubscriptionsRefresh))
+	adminMux.HandleFunc("/admin/api/subscriptions/probe", corsHandler(handleSubscriptionsProbe))
+	adminMux.HandleFunc("/admin/api/subscriptions/unban", corsHandler(handleSubscriptionsUnban))
 	adminMux.HandleFunc("/admin/zen/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusFound)
 	})
+	// 仪表盘聚合 API
+	registerDashboardRoutes(adminMux)
 	// 第三方 provider (workbuddy / workbuddy-ai / qoder) 管理路由
 	registerProviderRoutes(adminMux)
 	mux.Handle("/admin/", localhostGuard(adminMux))

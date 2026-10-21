@@ -555,7 +555,7 @@ func handleProviderModels(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-// GET /admin/api/providers/credits  三个 provider 的积分余额 + 签到状态
+// GET /admin/api/providers/credits  五家 provider 的积分余额 + 签到状态
 func handleProviderCredits(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
 		writeAPI(w, http.StatusMethodNotAllowed, apiResponse{Error: "method not allowed"})

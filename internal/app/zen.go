@@ -195,7 +195,7 @@ type zenConfigData struct {
 	Key             string           `json:"key"`
 	BaseURL         string           `json:"baseURL"`
 	Proxies         []string         `json:"proxies"`         // http(s)/socks5 代理,轮询出口
-	ProxyStrategy   string           `json:"proxyStrategy"`   // round_robin / random / fill
+	ProxyStrategy   string           `json:"proxyStrategy"`   // round_robin / random / fill / sticky
 	MaxConcurrency  int              `json:"maxConcurrency"`  // zen 上游最大并发,防 worker 瞬时超限,默认 8
 	Retries         int              `json:"retries"`         // 限流/网络错误重试次数,默认 3
 	Failover        bool             `json:"failover"`        // zen 连续失败后故障转移到 cline 账号池,默认 true
@@ -314,13 +314,26 @@ func isRateLimited(status int, body string) bool {
 	}
 	if status == http.StatusBadGateway || status == http.StatusForbidden {
 		low := strings.ToLower(body)
-		for _, kw := range []string{"resourceexhausted", "limit reached", "rate limit", "too many", "overloaded", "busy"} {
+		for _, kw := range []string{"resourceexhausted", "limit reached", "rate limit", "too many", "overloaded", "busy", "freetiererror", "abusive traffic"} {
 			if strings.Contains(low, kw) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// isIPBanResponse 上游对出口 IP 的封禁信号(非限流): FreeTierError 明确指向
+// "当前网络/IP 检测到滥用流量", 换节点即可恢复 —— 该节点应永久移出。
+func isIPBanResponse(body string) bool {
+	low := strings.ToLower(body)
+	return strings.Contains(low, "freetiererror") || strings.Contains(low, "abusive traffic")
+}
+
+// isFreeUsageLimitResponse 上游 429 免费额度限流(按出口 IP 计频):
+// 该错误说明当前出口 IP 已被上游限频, 反复重试只会继续撞限, 直接拉黑节点。
+func isFreeUsageLimitResponse(body string) bool {
+	return strings.Contains(body, "FreeUsageLimitError")
 }
 
 func loadZenConfig() *zenConfigData {
@@ -605,6 +618,15 @@ func buildZenBody(params map[string]any, stream bool) map[string]any {
 	}
 	for _, key := range []string{"model", "messages", "max_tokens", "max_completion_tokens", "stream"} {
 		if val, ok := params[key]; ok {
+			// 2026-10-21 15:0x 上游新增 modelType/model 格式校验: 裸模型名报
+			// 400 "invalid model format. Expected format: modelType/model"。
+			// opencode 官方 CLI 的 provider 前缀 "opencode/" 实测可通过该校验
+			// (本机直连假指纹下带前缀报「转发层模型不可用」而非格式错误)。
+			if key == "model" {
+				if s, ok2 := val.(string); ok2 && s != "" {
+					val = "opencode/" + strings.TrimPrefix(s, "opencode/")
+				}
+			}
 			body[key] = val
 		}
 	}
@@ -702,6 +724,7 @@ func callZenAPI(params map[string]any, stream bool) (*http.Response, int, error)
 	// 请求级代理追踪: 拨号时写入实际选中的代理, 供冷却精确定位
 	pick := &zenProxyPick{idx: -1}
 	ctx := context.WithValue(context.Background(), zenPickKey{}, pick)
+	usageModel, _ := body["model"].(string)
 
 	for attempt := 0; ; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyJSON))
@@ -730,11 +753,19 @@ func callZenAPI(params map[string]any, stream bool) (*http.Response, int, error)
 		log.Printf("  zen upstream: model=%s stream=%v msgs=%d via=%s attempt=%d session=%s",
 			body["model"], body["stream"], getMsgCount(params), describeZenProxy(), attempt+1, kit.Truncate(sess, 24))
 
+		reqStart := time.Now()
 		resp, err := getZenHTTPClient().Do(req)
+		elapsedMs := time.Since(reqStart).Milliseconds()
 		if err != nil {
-			// 网络错误:退避重试(不计入故障转移,瞬时可恢复)
+			recordZenUsage(usageModel, pick.url, "网络错误", elapsedMs, kit.Truncate(err.Error(), 120))
+			// 网络错误:冷却本次实际拨号的出口再退避重试, 避免重试连续撞上
+			// 同一批坏节点耗尽次数(连接复用未拨号时 url 为空, 跳过)。
+			if pick.url != "" {
+				cooldownZenProxy(pick.url, 10*time.Minute)
+			}
+			// 退避重试(不计入故障转移,瞬时可恢复)
 			if attempt < retries {
-				log.Printf("  zen network error (%v), retry %d/%d after %v", err, attempt+1, retries, delay)
+				log.Printf("  zen network error (%v), 冷却出口重试 %d/%d after %v", err, attempt+1, retries, delay)
 				time.Sleep(kit.WithRetryJitter(delay))
 				delay *= 2
 				continue
@@ -743,7 +774,9 @@ func callZenAPI(params map[string]any, stream bool) (*http.Response, int, error)
 		}
 		resp = decodeZenResponse(resp)
 		if resp.StatusCode == http.StatusOK {
+			recordZenUsage(usageModel, pick.url, "成功", elapsedMs, "")
 			markZenSuccess()
+			setZenStickyProxy(pick.url) // sticky 策略: 粘住本次成功的出口
 			if stream {
 				return resp, rateLimited, nil
 			}
@@ -764,22 +797,42 @@ func callZenAPI(params map[string]any, stream bool) (*http.Response, int, error)
 		bodyBytes := kit.ReadBody(resp)
 		resp.Body.Close()
 		reason := fmt.Sprintf("zen API %d: %s", resp.StatusCode, kit.Truncate(bodyBytes, 500))
+		recordZenUsage(usageModel, pick.url, fmt.Sprintf("HTTP %d", resp.StatusCode), elapsedMs, kit.Truncate(reason, 120))
 
 		if isRateLimited(resp.StatusCode, bodyBytes) {
 			rateLimited++
-			// 冷却本次请求实际拨号使用的代理; 未拨号(连接复用)时回退到计数法
-			// 代理池为空时走的是统一出口代理, 没有池内索引可冷却, 跳过
-			idx := pick.idx
-			if idx < 0 && len(effectiveZenProxies()) > 0 {
-				idx = lastZenProxyIdx()
-			}
-			if idx >= 0 {
+			// 冷却本次请求实际拨号使用的代理(按 URL 记账, 订阅节点进出池不影响)。
+			// 连接复用(未拨号, url 为空)时无法定位实际出口, 不做冷却 ——
+			// 由下方 CloseIdleConnections 强制下次拨号后再精确冷却。
+			if pick.url != "" {
 				d := parseRetryAfter(resp.Header.Get("Retry-After"))
 				if d <= 0 {
 					d = 10 * time.Minute
 				}
-				cooldownZenProxy(idx, d)
-				log.Printf("  zen rate limited (%d), proxy cooldown %v", resp.StatusCode, d)
+				cooldownZenProxy(pick.url, d)
+				log.Printf("  zen rate limited (%d), 冷却出口 %s %v", resp.StatusCode, maskProxyURL(pick.url), d)
+				// 出口 IP 被上游封禁/拉黑: 429 且 Retry-After 超过 1h(实测 ~12h),
+				// 403 FreeTierError(明确指向当前 IP 滥用),
+				// 或 429 FreeUsageLimitError(免费额度按出口 IP 限流, 该节点反复撞限)
+				// —— 订阅节点直接永久封禁并移出轮询池, 避免反复撞枪口; 手动代理仅冷却。
+				banReason := ""
+				switch {
+				case d > time.Hour:
+					banReason = fmt.Sprintf("上游 IP 封禁 (HTTP %d, Retry-After %v)", resp.StatusCode, d)
+				case isIPBanResponse(string(bodyBytes)):
+					banReason = "上游 IP 封禁 (FreeTierError/abusive traffic)"
+				case isFreeUsageLimitResponse(string(bodyBytes)):
+					banReason = "免费额度限流 (429 FreeUsageLimitError)"
+				}
+				if banReason != "" {
+					subBanNodeByURL(pick.url, banReason)
+				}
+			}
+			// 关键: keep-alive 复用会让重试继续走被限流节点的既有连接(同出口 IP 必复现 429),
+			// 冷却机制完全失效。关闭空闲连接强制重试重新拨号, pickZenProxy 才能把流量
+			// 切到冷却跳过后的其他节点。仅池内有订阅/代理节点时有意义。
+			if len(effectiveZenProxies()) > 0 {
+				getZenHTTPClient().CloseIdleConnections()
 			}
 			// 裸 500 只补一次: 瞬时抖动重试一次基本就能过; 如果连续 500 说明
 			// 上游整体故障, 继续退避重试只会把每个请求拖到 9 秒, 不如尽快失败
@@ -833,6 +886,101 @@ func describeZenProxy() string {
 		}
 	}
 	return fmt.Sprintf("proxy[%d]=%s", idx+1, kit.Truncate(maskProxyURL(p), 60))
+}
+
+// ---- zen 出口使用记录 ----
+// 每次上游尝试记录: 时间/模型/实际出口节点/结果, 供后台「代理节点使用记录」展示。
+// 内存环形缓冲, 重启清空; 复用 keep-alive 连接的请求未重新拨号, 出口标注为复用。
+
+const zenUsageMax = 300
+
+type zenUsageRecord struct {
+	Time      string `json:"time"`
+	Model     string `json:"model"`
+	Node      string `json:"node"`
+	NodeURL   string `json:"nodeURL,omitempty"`
+	IP        string `json:"ip,omitempty"`     // 出口 IP(真实出口 IP 优先, 未探测过时为节点服务器地址)
+	Region    string `json:"region,omitempty"` // 出口地理位置(如「日本」「香港」)
+	Status    string `json:"status"`
+	LatencyMs int64  `json:"latencyMs,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+}
+
+var (
+	zenUsageMu  sync.Mutex
+	zenUsageLog = make([]zenUsageRecord, 0, zenUsageMax)
+)
+
+// describeUsageNode 出口的可读名称: 订阅节点显示节点名, 手动代理显示脱敏 URL
+func describeUsageNode(proxyURL string) string {
+	if proxyURL == "" {
+		return "↻ 复用连接"
+	}
+	if p, err := strconv.Atoi(strings.TrimPrefix(proxyURL, "socks5://127.0.0.1:")); err == nil && p >= subPortBase {
+		if name, proto, ok := subNodeByPort(p); ok {
+			return fmt.Sprintf("%s (%s :%d)", name, proto, p)
+		}
+		return fmt.Sprintf("订阅节点:%d", p)
+	}
+	return kit.Truncate(maskProxyURL(proxyURL), 60)
+}
+
+func recordZenUsage(model, proxyURL, status string, latencyMs int64, detail string) {
+	rec := zenUsageRecord{
+		Time:      time.Now().Format("01-02 15:04:05"),
+		Model:     model,
+		Node:      describeUsageNode(proxyURL),
+		Status:    status,
+		LatencyMs: latencyMs,
+		Detail:    detail,
+	}
+	if proxyURL != "" {
+		rec.NodeURL = maskProxyURL(proxyURL)
+		// 订阅节点出口: 附带出口 IP 与地理位置(真实出口 IP 优先, 未探测过时退节点服务器地址)
+		if p, err := strconv.Atoi(strings.TrimPrefix(proxyURL, "socks5://127.0.0.1:")); err == nil && p >= subPortBase {
+			if _, _, server, region, exitIP, ok := subNodeNetByPort(p); ok {
+				rec.IP = exitIP
+				if rec.IP == "" {
+					rec.IP = server
+				}
+				rec.Region = region
+			}
+		}
+	}
+	zenUsageMu.Lock()
+	zenUsageLog = append(zenUsageLog, rec)
+	if len(zenUsageLog) > zenUsageMax {
+		zenUsageLog = zenUsageLog[len(zenUsageLog)-zenUsageMax:]
+	}
+	zenUsageMu.Unlock()
+}
+
+// zenUsageSnapshot 使用记录副本, 最新在前
+func zenUsageSnapshot() []zenUsageRecord {
+	zenUsageMu.Lock()
+	defer zenUsageMu.Unlock()
+	out := make([]zenUsageRecord, len(zenUsageLog))
+	for i, r := range zenUsageLog {
+		out[len(zenUsageLog)-1-i] = r
+	}
+	return out
+}
+
+// zenUsageLen 当前记录条数(大模型探测用: 记录调用前长度, 再读此后第一条新增)
+func zenUsageLen() int {
+	zenUsageMu.Lock()
+	defer zenUsageMu.Unlock()
+	return len(zenUsageLog)
+}
+
+// zenUsageAt 取第 i 条记录(0 基, 按时间正序)
+func zenUsageAt(i int) (zenUsageRecord, bool) {
+	zenUsageMu.Lock()
+	defer zenUsageMu.Unlock()
+	if i < 0 || i >= len(zenUsageLog) {
+		return zenUsageRecord{}, false
+	}
+	return zenUsageLog[i], true
 }
 
 func zenModelList() []map[string]any {

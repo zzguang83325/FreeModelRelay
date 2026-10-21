@@ -249,6 +249,9 @@ func requestLogMiddleware(next http.Handler) http.Handler {
 			ReqBody:  string(reqPreview),
 			RespBody: summarizeResponse(sw),
 		})
+		// 记录仪表盘指标：从响应体提取 token usage（非流式）
+		pt, ct := extractUsageFromResponse(sw.respBuf)
+		RecordRequest(route, logModel, sw.status, pt, ct)
 		logDiagRESP(r, sw.status, time.Since(start), "model="+displayModel+" route="+route)
 	})
 }

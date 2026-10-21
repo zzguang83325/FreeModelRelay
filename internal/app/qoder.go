@@ -633,7 +633,7 @@ func qoderModelList() []map[string]any {
 	out := make([]map[string]any, 0, len(list))
 	for _, m := range list {
 		publicID := m.Key
-		if dup[m.Key] {
+		if dup[strings.ToLower(m.Key)] {
 			publicID = "qoder/" + m.Key
 		}
 		image, video := applyModalityProbe(modalityKey("qoder", m.Key), nil, nil)

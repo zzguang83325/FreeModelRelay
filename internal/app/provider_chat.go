@@ -674,46 +674,47 @@ func providerNameOf(variant string) string {
 // (实测: workbuddy 与 qoder 都有 auto; CN 与 INTL 都有 hy3/glm-5.2/glm-5.3),
 // 裸 id 只能解析到其中一个, 直接对外暴露就是给客户端埋 500 的坑。
 // 与 zen/cline 目录撞名同样必须加前缀, 否则会被那两个上游抢走。
+// 撞名判定大小写不敏感: providerRoute 裸名解析不区分大小写
+// (实测: trae 目录小写 "deepseek-v4.1-flash" 会抢走 loomy 的
+// "DeepSeek-V4.1-Flash" 的裸 id 路由), 精确比较会漏判这种歧义。
 func providerPublicIDs() map[string]bool {
 	dup := map[string]bool{}
 	seen := map[string]struct{}{}
+	add := func(key string) {
+		k := strings.ToLower(strings.TrimSpace(key))
+		if k == "" {
+			return
+		}
+		if _, ok := seen[k]; ok {
+			dup[k] = true
+		}
+		seen[k] = struct{}{}
+	}
 	wbModelsMu.RLock()
 	for _, m := range wbModels {
-		if _, ok := seen[m.ID]; ok {
-			dup[m.ID] = true
-		}
-		seen[m.ID] = struct{}{}
+		add(m.ID)
 	}
 	wbModelsMu.RUnlock()
 	for _, m := range qoderModelSnapshot() {
-		if _, ok := seen[m.Key]; ok {
-			dup[m.Key] = true
-		}
-		seen[m.Key] = struct{}{}
+		add(m.Key)
 	}
 	for _, m := range traeModelSnapshot() {
-		if _, ok := seen[m.Key]; ok {
-			dup[m.Key] = true
-		}
-		seen[m.Key] = struct{}{}
+		add(m.Key)
 	}
 	for _, m := range loomyModelSnapshot() {
-		if _, ok := seen[m.Key]; ok {
-			dup[m.Key] = true
-		}
-		seen[m.Key] = struct{}{}
+		add(m.Key)
 	}
 	// 与 zen / cline 目录撞名: 那些模型有各自的解析优先级, 裸 id 到不了我们这里。
 	initZenModels()
 	zenModelsMu.RLock()
 	for id := range zenModels {
-		dup[id] = true
+		add(id)
 	}
 	zenModelsMu.RUnlock()
 	initModelsCache()
 	modelsMu.Lock()
 	for id := range modelsCache {
-		dup[id] = true
+		add(id)
 	}
 	modelsMu.Unlock()
 	return dup
@@ -722,7 +723,7 @@ func providerPublicIDs() map[string]bool {
 // providerPublicID 返回该模型对外暴露的 id: 唯一时保持裸 id(不破坏既有调用),
 // 有歧义时加 <provider>/ 前缀。两种形态 providerRoute 都能路由。
 func providerPublicID(variant, id string) string {
-	if !providerPublicIDs()[id] {
+	if !providerPublicIDs()[strings.ToLower(strings.TrimSpace(id))] {
 		return id
 	}
 	return providerNameOf(variant) + "/" + id

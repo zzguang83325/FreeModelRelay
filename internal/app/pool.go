@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -62,9 +63,11 @@ func loadPool() *AccountPool {
 // 校验用 isKnownModel —— cline 账号池 / zen 免费 / 第三方 provider 三类模型都能
 // 设为默认。原先只查 modelsCache, 导致把 workbuddy/hy3 这类 provider 模型设为
 // 默认时被静默忽略(管理页报成功、实际仍是旧默认)。
-// 入参可能是 /v1/models 的展示 id(带分组前缀与计费段), 先归一成路由 id 再存。
+// 入参可能是 /v1/models 的展示 id(带计费段): 只剥计费装饰, 保留 <provider>/ 分组
+// 前缀 —— 同名模型(如 loomy 与 trae 都有 DeepSeek-V4.1-Flash)必须靠前缀区分
+// 归属, 剥掉前缀存裸名会让默认请求按 wb→qoder→trae→loomy 顺序打到错误上游。
 func setDefaultModel(modelID string) {
-	modelID = providerNormalizeDisplayID(modelID)
+	modelID = providerStripDecorate(strings.TrimSpace(modelID))
 	if modelID == "" || !isKnownModel(modelID) {
 		return
 	}
@@ -253,7 +256,7 @@ func ListAccounts() []*Account {
 			TokensDate:      a.TokensDate,
 			CreatedAt:       a.CreatedAt,
 			CooldownUntil:   a.CooldownUntil,
-			LastReason:     a.LastReason,
+			LastReason:      a.LastReason,
 		}
 	}
 	savePoolLocked()

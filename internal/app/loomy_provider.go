@@ -371,7 +371,8 @@ func loomyModelList() []map[string]any {
 	out := make([]map[string]any, 0, len(list))
 	for _, m := range list {
 		publicID := m.Key
-		if dup[m.Key] {
+		// providerPublicIDs 的键统一小写, 查询也须小写(撞名判定大小写不敏感)
+		if dup[strings.ToLower(m.Key)] {
 			publicID = loomyGroup + "/" + m.Key
 		}
 		image, video := applyModalityProbe(modalityKey(loomyGroup, m.Key), m.Vision, nil)

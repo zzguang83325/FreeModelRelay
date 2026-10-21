@@ -1070,7 +1070,7 @@ func traeModelList() []map[string]any {
 	out := make([]map[string]any, 0, len(list))
 	for _, m := range list {
 		publicID := m.Key
-		if dup[m.Key] {
+		if dup[strings.ToLower(m.Key)] {
 			publicID = "trae/" + m.Key
 		}
 		image, video := applyModalityProbe(modalityKey("trae", m.Key), nil, nil)
