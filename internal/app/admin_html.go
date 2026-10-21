@@ -282,6 +282,7 @@ body:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
         <option value="workbuddy-ai">workbuddy-ai</option>
         <option value="qoder">qoder</option>
         <option value="trae">trae</option>
+        <option value="loomy">loomy</option>
       </select>
       <label class="hint mcheck"><input type="checkbox" id="mFilterFree" onchange="renderModelTable()">仅看免费</label>
       <label class="hint mcheck"><input type="checkbox" id="mFilterImage" onchange="renderModelTable()">仅看支持图片</label>
